@@ -6,14 +6,24 @@ Every employee signs in with their name and a 4-digit PIN, fills in the numbers 
 
 ## What each role reports
 
-| Role | Numbers tracked |
-|---|---|
-| Sales & telecalling | Calls made, connected, new leads, follow-ups, **orders converted**, **sales value**, **orders cancelled**, cancelled value, callbacks pending, cancel reasons |
-| HR & hiring | Candidates sourced, candidate calls, **interviews scheduled**, attended, selected, **hired / joined**, **call drivers arranged**, no-shows, positions |
-| Development | Tasks completed / in progress, bugs fixed, features shipped, deployments, hours, project, blockers |
-| Sales head | Team revenue, client meetings, new clients, pipeline value, escalations, team reviews, strategy notes |
+**Telecallers** paste their lists in bulk every day (copy from Excel, WhatsApp or notes — one line per entry, or upload an Excel/CSV):
 
-Everyone also fills: **Wins today**, Challenges, Plan for tomorrow, and a day rating.
+| Import | Line format | What the app does |
+|---|---|---|
+| Calls | name, number, remarks | Counts calls and tags each as Interested / Call back / Not interested / No answer from the remarks. Interested calls are highlighted to management. |
+| Orders | name, number, product, qty + unit, amount | Adds up sales ₹, **kg** and **litres** (g and ml are converted). |
+| Customers | name, number, area, new/existing | Keeps each telecaller's customer list (one row per number) — new vs existing. |
+| Cancellations | name, number, product, qty, amount, reason | Counts cancelled orders and value lost. |
+
+**HR** pastes their candidate calls: name, number, position, remarks. Each is tagged Interview scheduled / Joined / Driver arranged / Relieved / Not interested / No answer / Called, so the app counts calls, scheduled, joined and relieved.
+
+**Developers** write what they worked on as text (plus blockers).
+
+**Sales head** (Naveen) gets all of the above plus a team update box.
+
+Everyone can add wins, challenges, a plan for tomorrow and a day rating. The status picked from remarks can be changed on the preview screen before saving.
+
+Excel uploads need a header row. Recognised headers include: Name, Number/Mobile/Phone, Remarks, Status, Product, Qty, Unit, Amount, Area, Type, Reason, Position.
 
 Team setup (edit in the Google Sheet's `Employees` tab once live):
 
@@ -44,7 +54,7 @@ Open http://localhost:5173. With no Sheet connected, the app runs in demo mode w
 
 1. Create a new Google Sheet (e.g. "Team Pulse Database").
 2. **Extensions → Apps Script**. Delete the sample code, paste all of `apps-script/Code.gs`, click **Save**.
-3. In the function dropdown pick **setup** and click **Run**. Approve the permissions. This creates three tabs: `Employees`, `Reports`, `Settings`.
+3. In the function dropdown pick **setup** and click **Run**. Approve the permissions. This creates the tabs `Employees`, `Reports`, `Calls`, `Orders`, `Customers`, `Cancellations`, `HR Calls` and `Settings`.
 4. Open the `Settings` tab and set `MANAGEMENT_EMAILS` (comma-separated) and `COMPANY_NAME`.
 5. **Deploy → New deployment → Web app**
    - Execute as: **Me**
@@ -72,11 +82,12 @@ Employees open the link on their phone and choose **Add to Home Screen** (Androi
 - **Every evening** → one team summary email, showing who submitted and who didn't.
 - **Share on WhatsApp** button after each submission, pre-filled with the formatted EOD.
 - **Team dashboard** (Naveen and Management) with today's check-in, KPIs, charts and per-person tables.
-- **Download reports** → This week / Last week / This month / Last month / Custom dates, whole team or one person, as Excel (summary + a sheet per role + daily notes), PDF or CSV.
+- **Call data** page → search and filter every call, order, customer, cancellation and HR call by date, person and status; download any list to Excel.
+- **Download reports** → This week / Last week / This month / Last month / Custom dates, whole team or one person, as Excel (summary, interested calls, all calls, orders, cancelled, customers, HR calls, daily updates) or PDF (simple report with interested calls highlighted).
 
 ## Customising
 
-- Add or rename fields: `src/config/team.js` (the Sheet adds new metric columns automatically).
+- Statuses, import columns and text boxes: `src/config/team.js`. Keyword rules for auto-tagging: `src/lib/parse.js`.
 - Add a new employee: add a row to the `Employees` tab. `roles` is a comma-separated list of `telecaller`, `hiring`, `developer`, `saleshead`. Set `isAdmin` to `yes` to give dashboard access.
 - Colours and fonts: the variables at the top of `src/styles.css`.
 
@@ -86,8 +97,11 @@ Employees open the link on their phone and choose **Add to Home Screen** (Androi
 apps-script/Code.gs        Google Sheets backend + emails
 src/config/team.js         Roles, metrics, default team
 src/lib/api.js             Talks to the Sheet (or demo storage)
-src/lib/reports.js         Totals + Excel / PDF / CSV export
-src/pages/                 Login, DailyEntry, MyReports, TeamDashboard, ReportsCenter
+src/lib/parse.js           Reads pasted lists / Excel files, tags status
+src/lib/stats.js           Counts, kg/litre totals, per-person numbers
+src/lib/reports.js         WhatsApp text + Excel / PDF export
+src/components/Records.jsx Bulk import screen + record tables
+src/pages/                 Login, DailyEntry, MyReports, TeamDashboard, RecordsPage, ReportsCenter
 ```
 
 ## A note on security

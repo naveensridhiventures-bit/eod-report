@@ -1,26 +1,49 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ROLES } from '../config/team';
-import { fetchReports } from '../lib/api';
-import { sumMetrics } from '../lib/reports';
+import { fetchReports, fetchRecords } from '../lib/api';
+import { statsFor } from '../lib/stats';
 import { monthRange } from '../lib/date';
-import { fmtMetric } from '../lib/format';
 import { Loading, Empty, ROLE_ICONS } from '../components/ui';
 import DayCard from '../components/DayCard';
+import { Tiles } from './DailyEntry';
+
+const MONTH_TILES = {
+  telecaller: [
+    { key: 'calls_made', label: 'Calls made' },
+    { key: 'interested_calls', label: 'Interested', tone: 'good' },
+    { key: 'orders', label: 'Orders', tone: 'good' },
+    { key: 'sales_value', label: 'Sales', money: true, tone: 'good' },
+    { key: 'sales_kg', label: 'Sold (kg)' },
+    { key: 'sales_l', label: 'Sold (L)' },
+    { key: 'orders_cancelled', label: 'Cancelled', tone: 'bad' },
+    { key: 'customers_total', label: 'My customers' },
+    { key: 'customers_existing', label: 'Existing' },
+    { key: 'customers_new', label: 'New' }
+  ],
+  hiring: [
+    { key: 'hr_calls', label: 'Calls made' },
+    { key: 'scheduled', label: 'Scheduled', tone: 'good' },
+    { key: 'joined', label: 'Joined', tone: 'good' },
+    { key: 'drivers_arranged', label: 'Drivers arranged', tone: 'good' },
+    { key: 'relieved', label: 'Relieved', tone: 'bad' }
+  ]
+};
 
 export default function MyReports({ user, notify, goTo }) {
   const [ref, setRef] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [reports, setReports] = useState(null);
+  const [records, setRecords] = useState(null);
   const { from, to } = monthRange(ref);
 
   useEffect(() => {
     setReports(null);
-    fetchReports({ employeeId: user.id, from, to })
-      .then(setReports)
-      .catch((e) => { setReports([]); notify(e.message, 'error'); });
+    Promise.all([fetchReports({ employeeId: user.id, from, to }), fetchRecords({ employeeId: user.id, from, to })])
+      .then(([rep, rec]) => { setReports(rep); setRecords(rec); })
+      .catch((e) => { setReports([]); setRecords({}); notify(e.message, 'error'); });
   }, [user.id, from, to, notify]);
 
-  const totals = useMemo(() => sumMetrics(reports || []), [reports]);
+  const stats = useMemo(() => statsFor(records || {}, { from, to }), [records, from, to]);
   const isCurrent = ref.getMonth() === new Date().getMonth() && ref.getFullYear() === new Date().getFullYear();
   const shift = (n) => setRef(new Date(ref.getFullYear(), ref.getMonth() + n, 1));
 
@@ -33,9 +56,7 @@ export default function MyReports({ user, notify, goTo }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => shift(-1)} aria-label="Previous month"><ChevronLeft size={18} /></button>
-          <strong className="num" style={{ minWidth: 130, textAlign: 'center', fontSize: 17 }}>
-            {ref.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
-          </strong>
+          <strong className="num" style={{ minWidth: 130, textAlign: 'center', fontSize: 17 }}>{ref.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</strong>
           <button className="btn btn-ghost btn-sm" onClick={() => shift(1)} disabled={isCurrent} aria-label="Next month"><ChevronRight size={18} /></button>
         </div>
       </div>
@@ -43,20 +64,15 @@ export default function MyReports({ user, notify, goTo }) {
       {!reports ? <Loading /> : (
         <>
           <div className="stack" style={{ marginBottom: 20 }}>
-            {user.roles.map((rk) => {
-              const role = ROLES[rk];
+            {user.roles.filter((rk) => MONTH_TILES[rk]).map((rk) => {
               const Icon = ROLE_ICONS[rk];
               return (
                 <div className="panel" key={rk}>
                   <div className="panel-head">
-                    <h3><span className="section-icon" style={{ background: role.color, width: 30, height: 30 }}><Icon size={16} /></span>{role.label} this month</h3>
+                    <h3><span className="section-icon" style={{ background: ROLES[rk].color, width: 30, height: 30 }}><Icon size={16} /></span>{ROLES[rk].label} this month</h3>
                     <span className="chip">{reports.length} days reported</span>
                   </div>
-                  <div className="kv" style={{ marginBottom: 0 }}>
-                    {role.metrics.map((m) => (
-                      <div key={m.key}><span>{m.label}</span><b style={{ color: m.highlight === 'bad' ? 'var(--bad)' : m.highlight === 'good' ? 'var(--good)' : undefined }}>{fmtMetric(m, totals[m.key])}</b></div>
-                    ))}
-                  </div>
+                  <Tiles items={MONTH_TILES[rk]} stats={stats} />
                 </div>
               );
             })}

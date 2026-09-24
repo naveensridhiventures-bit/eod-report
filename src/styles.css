@@ -384,3 +384,63 @@ button { cursor: pointer; }
   .panel { padding: 16px; }
   .table-wrap { margin: 0 -16px -16px; }
 }
+
+/* ─────────────  Bulk import & records  ───────────── */
+.chip-blue { background: #e3edfb; color: #2a5ea8; }
+.tiles { display: flex; flex-wrap: wrap; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+.tile { background: #fbfcfb; padding: 12px 14px; flex: 1 1 110px; }
+.tile-v { font-family: var(--f-display); font-weight: 800; font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile-l { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+.tile.good .tile-v { color: var(--good); }
+.tile.bad .tile-v { color: var(--bad); }
+.import-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.saved-box { border: 1px solid var(--line); border-radius: 12px; margin-top: 12px; overflow: hidden; }
+.saved-box .table-wrap { margin: 0; max-height: 360px; overflow-y: auto; }
+.rec-table td.wrap { white-space: normal; min-width: 220px; max-width: 420px; }
+.table tr.hl td { background: #f1faf4; }
+.table tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+.table a { color: var(--ever-3); text-decoration: none; font-weight: 600; }
+.icon-btn { border: 0; background: transparent; width: 32px; height: 32px; border-radius: 8px; display: inline-grid; place-items: center; color: var(--muted); }
+.icon-btn:hover { background: var(--mist); color: var(--bad); }
+.sheet-wide { max-width: 980px; }
+.sheet-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.textarea.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+.bi-actions { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 14px 0 6px; }
+.bi-table { margin: 0; border: 1px solid var(--line); border-radius: 12px; max-height: 50vh; overflow: auto; }
+.bi-table td { padding: 4px 6px; }
+.bi-table th { padding: 8px 8px; position: sticky; top: 0; z-index: 1; }
+.cell-input { width: 100%; min-width: 90px; border: 1px solid transparent; background: transparent; border-radius: 7px; padding: 6px 8px; font-size: 14px; }
+.cell-input:hover { border-color: var(--line); }
+.cell-input:focus { border-color: var(--ever-3); background: #fff; outline: none; }
+.cell-input.remarks, .cell-input.reason { min-width: 220px; }
+.cell-input.name { min-width: 140px; }
+.cell-input.qty, .cell-input.unit { min-width: 60px; width: 70px; }
+select.cell-input { min-width: 150px; border-color: var(--line); background: #fff; }
+.preview-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.preview-sum strong { margin-right: 10px; }
+.highlight-list .hl-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.highlight-list .hl-item:last-child { border-bottom: 0; }
+.hl-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); margin-top: 6px; }
+.hl-name { font-weight: 700; }
+.hl-meta { font-size: 13px; color: var(--muted); }
+.hl-remark { font-size: 14px; margin-top: 2px; }
+.update-item { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.update-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.update-item p { white-space: pre-wrap; font-size: 14px; margin-top: 4px; }
+@media (max-width: 860px) {
+  .sheet-wide { max-height: 92vh; }
+  .tile { padding: 10px; flex-basis: 30%; }
+  .tile-v { font-size: 19px; }
+  .import-row .btn { flex: 1 1 calc(50% - 8px); }
+}
+.kpi-value small { font-size: 15px; font-weight: 700; color: var(--muted); }
+.search { position: relative; }
+.search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.search .input { padding-left: 36px; }
+.panel.flush { padding: 0; overflow: hidden; }
+.panel.flush > .table-wrap { margin: 0; }
+
+.table.compact { min-width: 420px; }
+.table.compact th, .table.compact td { padding-left: 12px; padding-right: 12px; }
+.cell-input.phone { min-width: 118px; }
+@media (max-width: 860px) { .bi-actions .btn { flex: 1; } }

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut } from 'lucide-react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
 import MyReports from './pages/MyReports';
 import TeamDashboard from './pages/TeamDashboard';
 import ReportsCenter from './pages/ReportsCenter';
+import RecordsPage from './pages/RecordsPage';
 import { Avatar, Toast } from './components/ui';
 import { fetchEmployees, IS_DEMO } from './lib/api';
 
@@ -63,6 +64,7 @@ export default function App() {
     !user.viewOnly && { key: 'today', label: 'Today’s report', short: 'Today', icon: CalendarCheck2 },
     !user.viewOnly && { key: 'history', label: 'My reports', short: 'Mine', icon: History },
     user.isAdmin && { key: 'team', label: 'Team dashboard', short: 'Team', icon: LayoutDashboard },
+    (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'records', label: 'Call data', short: 'Data', icon: Contact },
     { key: 'reports', label: 'Download reports', short: 'Download', icon: FileDown }
   ].filter(Boolean);
 
@@ -99,6 +101,7 @@ export default function App() {
         {page === 'history' && <MyReports {...props} />}
         {page === 'team' && <TeamDashboard {...props} />}
         {page === 'reports' && <ReportsCenter {...props} />}
+        {page === 'records' && <RecordsPage {...props} />}
       </div>
 
       <nav className="tabbar" aria-label="Main">

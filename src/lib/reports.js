@@ -1,65 +1,39 @@
-import { ROLES, ALL_METRICS, MOODS } from '../config/team';
-import { fmtDate, daysBetween } from './date';
-import { fmtMetric } from './format';
-
-export function sumMetrics(reports) {
-  const t = {};
-  reports.forEach((r) => {
-    Object.entries(r.metrics || {}).forEach(([k, v]) => { t[k] = (t[k] || 0) + (Number(v) || 0); });
-  });
-  return t;
-}
-
-export function perEmployee(reports, employees) {
-  return employees
-    .filter((e) => !e.viewOnly)
-    .map((e) => {
-      const mine = reports.filter((r) => r.employeeId === e.id);
-      const moods = mine.map((r) => Number(r.mood)).filter(Boolean);
-      return {
-        employee: e,
-        reports: mine,
-        days: mine.length,
-        totals: sumMetrics(mine),
-        mood: moods.length ? moods.reduce((a, b) => a + b, 0) / moods.length : 0
-      };
-    });
-}
-
-export function byDay(reports, from, to, keys) {
-  return daysBetween(from, to).map((date) => {
-    const row = { date };
-    const dayReports = reports.filter((r) => r.date === date);
-    keys.forEach((k) => {
-      row[k] = dayReports.reduce((s, r) => s + (Number(r.metrics?.[k]) || 0), 0);
-    });
-    row.submitted = dayReports.length;
-    return row;
-  });
-}
+import { ROLES, SNAPSHOT, MOODS, RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
+import { fmtDate } from './date';
+import { inr } from './format';
+import { perPerson, statsFor, fmtQty } from './stats';
 
 export const moodLabel = (v) => MOODS.find((m) => m.value === Number(v))?.label || '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-const byDateAsc = (a, b) => (a.date > b.date ? 1 : -1);
+const byDateAsc = (a, b) => (a.date === b.date ? (a.createdAt > b.createdAt ? 1 : -1) : a.date > b.date ? 1 : -1);
+
+export const TEXT_FIELDS = Object.values(ROLES).flatMap((r) => r.text);
 
 // ── WhatsApp / plain-text EOD ──────────────────────────────────
-export function eodText(report) {
+export function eodText(report, dayRecords) {
   const lines = [
     `*EOD Report — ${report.name}*`,
     fmtDate(report.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     ''
   ];
-  report.roles.forEach((role) => {
-    const def = ROLES[role];
-    if (!def) return;
-    const items = [];
-    def.metrics.forEach((m) => {
-      const v = report.metrics?.[m.key];
-      if (v !== undefined && v !== '' && Number(v) !== 0) items.push(`• ${m.label}: ${fmtMetric(m, v)}`);
-    });
-    def.notes?.forEach((n) => { if (report.notes?.[n.key]) items.push(`• ${n.label}: ${report.notes[n.key]}`); });
-    if (items.length) lines.push(`*${def.label}*`, ...items, '');
-  });
+  const m = report.metrics || {};
+  const nums = SNAPSHOT.filter((s) => report.roles.includes(s.role) && Number(m[s.key]))
+    .map((s) => `• ${s.label}: ${s.money ? inr(m[s.key]) : fmtQty(m[s.key])}`);
+  if (nums.length) lines.push('*Numbers*', ...nums, '');
+
+  const interested = (dayRecords?.calls || []).filter((c) => c.status === 'interested');
+  if (interested.length) {
+    lines.push(`*Interested customers (${interested.length})*`);
+    interested.slice(0, 15).forEach((c) => lines.push(`• ${c.name}${c.phone ? ` (${c.phone})` : ''}${c.remarks ? ` — ${c.remarks}` : ''}`));
+    lines.push('');
+  }
+  const hrGood = (dayRecords?.hiring || []).filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status));
+  if (hrGood.length) {
+    lines.push('*Hiring highlights*');
+    hrGood.slice(0, 15).forEach((c) => lines.push(`• ${c.name}${c.position ? `, ${c.position}` : ''} — ${statusInfo('hiring', c.status).label}`));
+    lines.push('');
+  }
+  TEXT_FIELDS.forEach((f) => { if (report.notes?.[f.key]) lines.push(`*${f.short}:* ${report.notes[f.key]}`); });
   if (report.positives) lines.push(`*Wins today:* ${report.positives}`);
   if (report.challenges) lines.push(`*Challenges:* ${report.challenges}`);
   if (report.tomorrow) lines.push(`*Plan for tomorrow:* ${report.tomorrow}`);
@@ -67,62 +41,84 @@ export function eodText(report) {
   return lines.join('\n');
 }
 
-// ── Excel ───────────────────────────────────────────────────────
-export async function exportExcel({ reports, employees, from, to, title }) {
-  const XLSX = await import('xlsx');
-  const wb = XLSX.utils.book_new();
-  const summary = perEmployee(reports, employees);
-  const usedMetrics = ALL_METRICS.filter((m) => reports.some((r) => r.metrics?.[m.key] !== undefined));
-
-  const sumRows = summary.map((s) => {
-    const row = { Employee: s.employee.name, Role: s.employee.title, 'Days reported': s.days, 'Avg day rating': s.mood ? Number(s.mood.toFixed(1)) : '' };
-    usedMetrics.forEach((m) => { row[m.label] = s.totals[m.key] || 0; });
+// Rows for one record type, ready for a table/sheet
+export function recordRows(type, list) {
+  const cols = RECORD_TYPES[type].cols;
+  return [...list].sort(byDateAsc).map((r) => {
+    const row = { Date: r.date, 'Entered by': r.employee };
+    cols.forEach((c) => {
+      let v = r[c] ?? '';
+      if (c === 'status' || c === 'type') v = statusInfo(type, v).label;
+      if (c === 'amount' || c === 'qty') v = Number(v) || 0;
+      row[COL_LABELS[c]] = v;
+    });
     return row;
   });
-  const team = sumMetrics(reports);
-  const totalRow = { Employee: 'TEAM TOTAL', Role: '', 'Days reported': reports.length, 'Avg day rating': '' };
-  usedMetrics.forEach((m) => { totalRow[m.label] = team[m.key] || 0; });
-  sumRows.push(totalRow);
+}
 
+function summaryRows(records, employees, range) {
+  return perPerson(records, employees, range).map(({ employee: e, s }) => ({
+    Employee: e.name,
+    Role: e.title,
+    'Calls made': s.calls_made,
+    Interested: s.interested_calls,
+    'Call backs': s.callbacks,
+    Orders: s.orders,
+    'Sales (₹)': s.sales_value,
+    'Sales (kg)': s.sales_kg,
+    'Sales (L)': s.sales_l,
+    'Cancelled orders': s.orders_cancelled,
+    'Cancelled (₹)': s.cancelled_value,
+    'Customers (total)': s.customers_total,
+    'Customers new': s.customers_new,
+    'Customers existing': s.customers_existing,
+    'HR calls': s.hr_calls,
+    Scheduled: s.scheduled,
+    Joined: s.joined,
+    'Drivers arranged': s.drivers_arranged,
+    Relieved: s.relieved
+  }));
+}
+
+function updateRows(reports) {
+  return [...reports].sort(byDateAsc).map((r) => {
+    const row = { Date: r.date, Employee: r.name };
+    TEXT_FIELDS.forEach((f) => { row[f.short] = r.notes?.[f.key] || ''; });
+    Object.assign(row, { 'Wins today': r.positives || '', Challenges: r.challenges || '', 'Plan for tomorrow': r.tomorrow || '', 'Day rating': moodLabel(r.mood) });
+    return row;
+  });
+}
+
+// ── Excel ───────────────────────────────────────────────────────
+export async function exportExcel({ records, reports, employees, from, to, title }) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  const add = (name, rows, width = 16) => {
+    if (!rows.length) return;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Object.keys(rows[0]).map((k) => ({ wch: Math.max(width, k.length + 2) }));
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  };
+
+  const summary = summaryRows(records, employees, { from, to });
   const ws = XLSX.utils.aoa_to_sheet([[`${title}: ${fmtDate(from)} to ${fmtDate(to)}`], []]);
-  XLSX.utils.sheet_add_json(ws, sumRows, { origin: 'A3' });
-  ws['!cols'] = Object.keys(sumRows[0]).map((k) => ({ wch: Math.max(12, k.length + 2) }));
+  XLSX.utils.sheet_add_json(ws, summary, { origin: 'A3' });
+  ws['!cols'] = Object.keys(summary[0] || { a: 1 }).map((k) => ({ wch: Math.max(12, k.length + 2) }));
   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
 
-  Object.values(ROLES).forEach((role) => {
-    const roleKey = Object.keys(ROLES).find((k) => ROLES[k] === role);
-    const rows = reports.filter((r) => r.roles?.includes(roleKey)).sort(byDateAsc).map((r) => {
-      const row = { Date: r.date, Employee: r.name };
-      role.metrics.forEach((m) => { row[m.label] = Number(r.metrics?.[m.key]) || 0; });
-      role.notes?.forEach((n) => { row[n.label] = r.notes?.[n.key] || ''; });
-      return row;
-    });
-    if (!rows.length) return;
-    const s = XLSX.utils.json_to_sheet(rows);
-    s['!cols'] = Object.keys(rows[0]).map((k) => ({ wch: Math.max(12, k.length + 2) }));
-    XLSX.utils.book_append_sheet(wb, s, role.short);
-  });
-
-  const notes = [...reports].sort(byDateAsc).map((r) => ({
-    Date: r.date,
-    Employee: r.name,
-    'Wins today': r.positives || '',
-    Challenges: r.challenges || '',
-    'Plan for tomorrow': r.tomorrow || '',
-    'Day rating': moodLabel(r.mood),
-    'Submitted at': r.submittedAt ? new Date(r.submittedAt).toLocaleString('en-IN') : ''
-  }));
-  if (notes.length) {
-    const s = XLSX.utils.json_to_sheet(notes);
-    s['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 50 }, { wch: 40 }, { wch: 40 }, { wch: 12 }, { wch: 22 }];
-    XLSX.utils.book_append_sheet(wb, s, 'Daily notes');
-  }
+  add('Interested calls', recordRows('calls', records.calls.filter((c) => c.status === 'interested')));
+  add('All calls', recordRows('calls', records.calls));
+  add('Orders', recordRows('orders', records.orders));
+  add('Cancelled', recordRows('cancellations', records.cancellations));
+  add('Customers', recordRows('customers', records.customers));
+  add('HR calls', recordRows('hiring', records.hiring));
+  add('Daily updates', updateRows(reports), 22);
 
   XLSX.writeFile(wb, `${slug(title)}_${from}_to_${to}.xlsx`);
 }
 
 // ── PDF ─────────────────────────────────────────────────────────
-export async function exportPDF({ reports, employees, from, to, title }) {
+export async function exportPDF({ records, reports, employees, from, to, title }) {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
@@ -130,111 +126,74 @@ export async function exportPDF({ reports, employees, from, to, title }) {
   const H = doc.internal.pageSize.getHeight();
   const green = [14, 59, 58];
   const gold = [244, 169, 59];
-  const money = (v) => 'Rs ' + Math.round(v || 0).toLocaleString('en-IN');
+  const rs = (v) => 'Rs ' + Math.round(v || 0).toLocaleString('en-IN');
+  const clean = (s) => String(s ?? '').replace(/₹/g, 'Rs ').replace(/[^\x20-\x7E\n]/g, '');
 
-  doc.setFillColor(...green);
-  doc.rect(0, 0, W, 74, 'F');
-  doc.setFillColor(...gold);
-  doc.rect(0, 74, W, 4, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
-  doc.text(title, 36, 38);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.text(`${fmtDate(from)} to ${fmtDate(to)}   |   ${reports.length} daily reports`, 36, 58);
+  doc.setFillColor(...green); doc.rect(0, 0, W, 74, 'F');
+  doc.setFillColor(...gold); doc.rect(0, 74, W, 4, 'F');
+  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
+  doc.text(clean(title), 36, 38);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+  doc.text(`${fmtDate(from)} to ${fmtDate(to)}`, 36, 58);
 
-  const t = sumMetrics(reports);
-  const headline = [
-    ['Orders converted', t.orders_converted || 0],
-    ['Sales value', money(t.sales_value)],
-    ['Orders cancelled', t.orders_cancelled || 0],
-    ['Interviews scheduled', t.interviews_scheduled || 0],
-    ['Hired / joined', t.hired || 0],
-    ['Drivers arranged', t.drivers_arranged || 0],
-    ['Dev tasks done', t.tasks_completed || 0],
-    ['Bugs fixed', t.bugs_fixed || 0]
+  const t = statsFor(records, { from, to });
+  const kpis = [
+    ['Calls made', t.calls_made], ['Interested', t.interested_calls], ['Orders', t.orders], ['Sales', rs(t.sales_value)],
+    ['Sales kg', fmtQty(t.sales_kg)], ['Sales L', fmtQty(t.sales_l)], ['Cancelled', t.orders_cancelled],
+    ['HR calls', t.hr_calls], ['Scheduled', t.scheduled], ['Joined', t.joined], ['Relieved', t.relieved]
   ];
   autoTable(doc, {
-    startY: 96,
-    head: [headline.map((h) => h[0])],
-    body: [headline.map((h) => String(h[1]))],
-    theme: 'grid',
-    headStyles: { fillColor: green, fontSize: 9 },
-    bodyStyles: { fontSize: 13, fontStyle: 'bold', halign: 'center' },
+    startY: 96, head: [kpis.map((k) => k[0])], body: [kpis.map((k) => String(k[1]))], theme: 'grid',
+    headStyles: { fillColor: green, fontSize: 8, halign: 'center' }, bodyStyles: { fontSize: 12, fontStyle: 'bold', halign: 'center' },
     margin: { left: 36, right: 36 }
   });
 
-  const summary = perEmployee(reports, employees);
-  Object.entries(ROLES).forEach(([roleKey, role]) => {
-    const people = summary.filter((s) => s.employee.roles.includes(roleKey));
-    if (!people.length) return;
+  const section = (label, head, body, opts = {}) => {
+    if (!body.length) return;
     let y = doc.lastAutoTable.finalY + 30;
     if (y > H - 110) { doc.addPage(); y = 50; }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.setTextColor(...green);
-    doc.text(role.label, 36, y);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...green);
+    doc.text(label, 36, y);
     autoTable(doc, {
-      startY: y + 8,
-      head: [['Employee', 'Days', ...role.metrics.map((m) => m.label.replace('₹', 'Rs'))]],
-      body: people.map((p) => [
-        p.employee.name,
-        p.days,
-        ...role.metrics.map((m) => (m.type === 'money' ? money(p.totals[m.key]) : p.totals[m.key] || 0))
-      ]),
-      theme: 'striped',
-      headStyles: { fillColor: green, fontSize: 8 },
-      bodyStyles: { fontSize: 9 },
-      margin: { left: 36, right: 36 }
+      startY: y + 8, head: [head], body: body.map((row) => row.map(clean)), theme: 'striped',
+      headStyles: { fillColor: green, fontSize: 8 }, bodyStyles: { fontSize: 8.5, valign: 'top' },
+      margin: { left: 36, right: 36 }, ...opts
     });
-  });
+  };
 
-  const notes = [...reports].sort(byDateAsc).filter((r) => r.positives || r.challenges);
-  if (notes.length) {
-    doc.addPage();
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(...green);
-    doc.text('Daily wins and challenges', 36, 44);
-    autoTable(doc, {
-      startY: 58,
-      head: [['Date', 'Employee', 'Wins today', 'Challenges', 'Plan for tomorrow']],
-      body: notes.map((r) => [r.date, r.name, r.positives || '', r.challenges || '', r.tomorrow || '']),
-      theme: 'striped',
-      headStyles: { fillColor: green, fontSize: 9 },
-      bodyStyles: { fontSize: 8, valign: 'top' },
-      columnStyles: { 0: { cellWidth: 64 }, 1: { cellWidth: 80 } },
-      margin: { left: 36, right: 36 }
-    });
-  }
+  const people = perPerson(records, employees, { from, to });
+  section('Telecallers',
+    ['Employee', 'Calls', 'Interested', 'Call backs', 'Orders', 'Sales', 'kg', 'L', 'Cancelled', 'Cancel Rs', 'Customers', 'New', 'Existing'],
+    people.filter((p) => p.employee.roles.includes('telecaller')).map(({ employee: e, s }) => [
+      e.name, s.calls_made, s.interested_calls, s.callbacks, s.orders, rs(s.sales_value), fmtQty(s.sales_kg), fmtQty(s.sales_l),
+      s.orders_cancelled, rs(s.cancelled_value), s.customers_total, s.customers_new, s.customers_existing
+    ]));
+  section('HR & hiring',
+    ['Employee', 'Calls', 'Scheduled', 'Joined', 'Drivers arranged', 'Relieved', 'Not interested'],
+    people.filter((p) => p.employee.roles.includes('hiring')).map(({ employee: e, s }) => [
+      e.name, s.hr_calls, s.scheduled, s.joined, s.drivers_arranged, s.relieved, s.hr_not_interested
+    ]));
+
+  const interested = [...records.calls].filter((c) => c.status === 'interested').sort(byDateAsc);
+  section(`Interested & positive calls (${interested.length})`, ['Date', 'Telecaller', 'Customer', 'Number', 'Remarks'],
+    interested.map((c) => [c.date, c.employee, c.name, c.phone, c.remarks]), { columnStyles: { 4: { cellWidth: 320 } } });
+
+  const hrGood = [...records.hiring].filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status)).sort(byDateAsc);
+  section('Hiring highlights', ['Date', 'HR', 'Candidate', 'Number', 'Position', 'Status', 'Remarks'],
+    hrGood.map((c) => [c.date, c.employee, c.name, c.phone, c.position, statusInfo('hiring', c.status).label, c.remarks]));
+
+  section('Cancelled orders', ['Date', 'Telecaller', 'Customer', 'Product', 'Qty', 'Amount', 'Reason'],
+    [...records.cancellations].sort(byDateAsc).map((c) => [c.date, c.employee, c.name, c.product, `${fmtQty(c.qty)} ${c.unit || ''}`, rs(c.amount), c.reason]));
+
+  const updates = [...reports].sort(byDateAsc).filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key]) || r.positives || r.challenges);
+  section('Daily updates', ['Date', 'Employee', 'Work / update', 'Wins', 'Challenges'],
+    updates.map((r) => [r.date, r.name, TEXT_FIELDS.map((f) => r.notes?.[f.key]).filter(Boolean).join('\n'), r.positives, r.challenges]),
+    { columnStyles: { 2: { cellWidth: 260 } } });
 
   const pages = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(120);
+    doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
     doc.text(`Team Pulse  |  Generated ${new Date().toLocaleString('en-IN')}  |  Page ${i} of ${pages}`, 36, H - 18);
   }
   doc.save(`${slug(title)}_${from}_to_${to}.pdf`);
-}
-
-// ── CSV ─────────────────────────────────────────────────────────
-export function exportCSV({ reports, from, to, title }) {
-  const head = ['Date', 'Employee', ...ALL_METRICS.map((m) => m.label), 'Wins today', 'Challenges', 'Plan for tomorrow', 'Day rating'];
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const lines = [head.map(esc).join(',')];
-  [...reports].sort(byDateAsc).forEach((r) => {
-    lines.push([
-      r.date, r.name, ...ALL_METRICS.map((m) => r.metrics?.[m.key] ?? ''),
-      r.positives, r.challenges, r.tomorrow, moodLabel(r.mood)
-    ].map(esc).join(','));
-  });
-  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${slug(title)}_${from}_to_${to}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

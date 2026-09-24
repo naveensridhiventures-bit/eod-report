@@ -8,6 +8,9 @@
  *      Execute as: Me      Who has access: Anyone
  *    Copy the /exec URL into the app's .env as VITE_SHEETS_API_URL
  * 5. Run  createDailyTrigger()  once to email management every evening.
+ *
+ * UPDATING FROM AN OLDER VERSION: paste this file, run setup() again (it only
+ * adds the missing tabs), then Deploy → Manage deployments → Edit → New version.
  */
 
 var SHEET_EMPLOYEES = 'Employees';
@@ -15,18 +18,28 @@ var SHEET_REPORTS = 'Reports';
 var SHEET_SETTINGS = 'Settings';
 var BASE_HEADERS = ['id', 'date', 'employeeId', 'name', 'roles', 'submittedAt', 'mood', 'positives', 'challenges', 'tomorrow', 'notes'];
 
+// Bulk-imported data: one tab per type
+var RECORD_BASE = ['id', 'date', 'employeeId', 'employee', 'createdAt'];
+var RECORD_SHEETS = {
+  calls: { sheet: 'Calls', cols: ['name', 'phone', 'remarks', 'status'] },
+  orders: { sheet: 'Orders', cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount'] },
+  customers: { sheet: 'Customers', cols: ['name', 'phone', 'area', 'type'] },
+  cancellations: { sheet: 'Cancellations', cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'] },
+  hiring: { sheet: 'HR Calls', cols: ['name', 'phone', 'position', 'remarks', 'status'] }
+};
+var NUMERIC_COLS = ['qty', 'amount'];
+var STATUS_LABELS = {
+  interested: 'Interested', callback: 'Call back', not_interested: 'Not interested', no_answer: 'No answer', other: 'Other',
+  scheduled: 'Interview scheduled', joined: 'Joined', driver_arranged: 'Driver arranged', relieved: 'Relieved', called: 'Called',
+  'new': 'New', existing: 'Existing'
+};
+
 // Human-friendly labels used in the emails
 var LABELS = {
-  calls_made: 'Calls made', calls_connected: 'Calls connected', leads_generated: 'New leads', followups_done: 'Follow-ups',
-  orders_converted: 'Orders converted', sales_value: 'Sales value (₹)', orders_cancelled: 'Orders cancelled',
-  cancelled_value: 'Cancelled value (₹)', callbacks_pending: 'Callbacks pending',
-  candidates_sourced: 'Candidates sourced', candidate_calls: 'Candidate calls', interviews_scheduled: 'Interviews scheduled',
-  interviews_attended: 'Interviews attended', candidates_selected: 'Selected', hired: 'Hired / joined',
-  drivers_arranged: 'Call drivers arranged', no_shows: 'No-shows',
-  tasks_completed: 'Tasks completed', tasks_in_progress: 'Tasks in progress', bugs_fixed: 'Bugs fixed',
-  features_shipped: 'Features shipped', deployments: 'Deployments', hours_worked: 'Hours worked',
-  team_revenue: 'Team revenue (₹)', client_meetings: 'Client meetings', new_clients: 'New clients',
-  pipeline_value: 'Pipeline value (₹)', escalations_resolved: 'Escalations resolved', team_reviews: 'Team reviews'
+  calls_made: 'Calls made', interested_calls: 'Interested calls', callbacks: 'Call backs', orders: 'Orders',
+  sales_value: 'Sales value (₹)', sales_kg: 'Sales (kg)', sales_l: 'Sales (L)', orders_cancelled: 'Orders cancelled',
+  cancelled_value: 'Cancelled value (₹)', customers_added: 'Customers added',
+  hr_calls: 'HR calls', scheduled: 'Interviews scheduled', joined: 'Joined', drivers_arranged: 'Drivers arranged', relieved: 'Relieved'
 };
 
 // ── One-time setup ────────────────────────────────────────────
@@ -56,6 +69,18 @@ function setup() {
     rep.getRange('B:B').setNumberFormat('@'); // store dates as plain text
     styleHeader(rep);
   }
+
+  Object.keys(RECORD_SHEETS).forEach(function (type) {
+    var def = RECORD_SHEETS[type];
+    var sh = ss.getSheetByName(def.sheet) || ss.insertSheet(def.sheet);
+    if (sh.getLastRow() === 0) {
+      sh.appendRow(RECORD_BASE.concat(def.cols));
+      sh.getRange('B:B').setNumberFormat('@');
+      var phoneCol = RECORD_BASE.length + def.cols.indexOf('phone') + 1;
+      sh.getRange(1, phoneCol, sh.getMaxRows(), 1).setNumberFormat('@');
+      styleHeader(sh);
+    }
+  });
 
   var set = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
   if (set.getLastRow() === 0) {
@@ -90,6 +115,13 @@ function doGet(e) {
     var p = e.parameter || {};
     if (p.action === 'employees') return json(ok(getEmployees(false)));
     if (p.action === 'reports') return json(ok(getReports(p.from, p.to, p.employeeId)));
+    if (p.action === 'records') {
+      var out = {};
+      String(p.types || Object.keys(RECORD_SHEETS).join(',')).split(',').forEach(function (t) {
+        if (RECORD_SHEETS[t]) out[t] = getRecords(t, t === 'customers' ? '' : p.from, t === 'customers' ? '' : p.to, p.employeeId);
+      });
+      return json(ok(out));
+    }
     return json(fail('Unknown action'));
   } catch (err) {
     return json(fail(err.message));
@@ -101,6 +133,8 @@ function doPost(e) {
     var body = JSON.parse(e.postData.contents || '{}');
     if (body.action === 'login') return json(ok(doLogin(body.employeeId, body.pin)));
     if (body.action === 'saveReport') return json(ok(saveReport(body.report)));
+    if (body.action === 'saveRecords') return json(ok(saveRecords(body.type, body.records || [])));
+    if (body.action === 'deleteRecord') return json(ok(deleteRecord(body.type, body.id)));
     if (body.action === 'sendEOD') { sendDailySummary(body.date); return json(ok(true)); }
     return json(fail('Unknown action'));
   } catch (err) {
@@ -208,6 +242,102 @@ function getReports(from, to, employeeId) {
   });
 }
 
+// ── Bulk-imported records ─────────────────────────────────────
+function recordSheet(type) {
+  var def = RECORD_SHEETS[type];
+  if (!def) throw new Error('Unknown data type: ' + type);
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(def.sheet);
+  if (!sh) throw new Error('The "' + def.sheet + '" tab is missing. Run setup() once in Apps Script.');
+  return sh;
+}
+
+function saveRecords(type, records) {
+  if (!records.length) return [];
+  var def = RECORD_SHEETS[type];
+  var sh = recordSheet(type);
+  var headers = RECORD_BASE.concat(def.cols);
+  var rows = records.map(function (r) {
+    return headers.map(function (h) {
+      var v = r[h];
+      if (NUMERIC_COLS.indexOf(h) !== -1) return Number(v) || 0;
+      return v === undefined || v === null ? '' : String(v);
+    });
+  });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if (type === 'customers') {
+      // One row per customer per telecaller: update if the number is already there
+      var last = sh.getLastRow();
+      var existing = {};
+      if (last > 1) {
+        var empCol = sh.getRange(2, 3, last - 1, 1).getDisplayValues();
+        var phCol = sh.getRange(2, RECORD_BASE.length + def.cols.indexOf('phone') + 1, last - 1, 1).getDisplayValues();
+        for (var i = 0; i < phCol.length; i++) if (phCol[i][0]) existing[empCol[i][0] + '|' + phCol[i][0]] = i + 2;
+      }
+      var fresh = [];
+      rows.forEach(function (row, idx) {
+        var key = records[idx].employeeId + '|' + (records[idx].phone || '');
+        if (records[idx].phone && existing[key]) {
+          var at = existing[key];
+          var old = sh.getRange(at, 1, 1, headers.length).getValues()[0];
+          row[0] = old[0]; row[1] = old[1]; row[4] = old[4]; // keep first-added date
+          sh.getRange(at, 1, 1, headers.length).setValues([row]);
+        } else fresh.push(row);
+      });
+      rows = fresh;
+    }
+    if (rows.length) {
+      var start = sh.getLastRow() + 1;
+      sh.getRange(start, 2, rows.length, 1).setNumberFormat('@');
+      sh.getRange(start, RECORD_BASE.length + def.cols.indexOf('phone') + 1, rows.length, 1).setNumberFormat('@');
+      sh.getRange(start, 1, rows.length, headers.length).setValues(rows);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  return records;
+}
+
+function getRecords(type, from, to, employeeId) {
+  var def = RECORD_SHEETS[type];
+  var sh = recordSheet(type);
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var headers = RECORD_BASE.concat(def.cols);
+  // Read only the date column first, then just the rows in range (keeps big sheets fast)
+  var dates = sh.getRange(2, 2, last - 1, 1).getDisplayValues();
+  var first = -1, lastIdx = -1;
+  for (var i = 0; i < dates.length; i++) {
+    var d = dates[i][0];
+    if ((!from || d >= from) && (!to || d <= to)) { if (first === -1) first = i; lastIdx = i; }
+  }
+  if (first === -1) return [];
+  var block = sh.getRange(first + 2, 1, lastIdx - first + 1, headers.length).getDisplayValues();
+  var out = [];
+  block.forEach(function (row) {
+    var o = {};
+    headers.forEach(function (h, j) { o[h] = NUMERIC_COLS.indexOf(h) !== -1 ? Number(String(row[j]).replace(/,/g, '')) || 0 : row[j]; });
+    if (!o.id) return;
+    if (from && o.date < from) return;
+    if (to && o.date > to) return;
+    if (employeeId && o.employeeId !== String(employeeId)) return;
+    out.push(o);
+  });
+  return out;
+}
+
+function deleteRecord(type, id) {
+  var sh = recordSheet(type);
+  var last = sh.getLastRow();
+  if (last < 2) return false;
+  var ids = sh.getRange(2, 1, last - 1, 1).getDisplayValues();
+  for (var i = ids.length - 1; i >= 0; i--) {
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); return true; }
+  }
+  return false;
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 function readSheet(name) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
@@ -232,25 +362,64 @@ function managementEmails() {
 }
 
 function inr(v) { return '₹' + Math.round(Number(v) || 0).toLocaleString('en-IN'); }
-function fmtVal(k, v) { return /value|revenue/.test(k) ? inr(v) : (Number(v) || 0); }
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }
 
 // ── Emails ────────────────────────────────────────────────────
+var TEXT_LABELS = { work_done: 'Work done', blockers: 'Blockers', head_update: 'Team & sales update' };
+var TD = 'padding:6px 10px;border-bottom:1px solid #e6ece9;font-size:13px;vertical-align:top';
+
+function interestedTable(calls) {
+  if (!calls.length) return '';
+  return '<h3 style="color:#1d7049;margin:18px 0 6px">Interested & positive calls (' + calls.length + ')</h3>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+    '<tr style="background:#f1faf4"><th style="' + TD + ';text-align:left">Customer</th><th style="' + TD + ';text-align:left">Number</th><th style="' + TD + ';text-align:left">Remarks</th><th style="' + TD + ';text-align:left">By</th></tr>' +
+    calls.map(function (c) {
+      return '<tr><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.remarks) + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
+    }).join('') + '</table>';
+}
+
+function hiringTable(list) {
+  var good = list.filter(function (c) { return ['scheduled', 'joined', 'driver_arranged', 'relieved'].indexOf(c.status) !== -1; });
+  if (!good.length) return '';
+  return '<h3 style="color:#2a5ea8;margin:18px 0 6px">Hiring updates</h3><table style="width:100%;border-collapse:collapse">' +
+    good.map(function (c) {
+      return '<tr><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.position) + '</td><td style="' + TD + '">' + (STATUS_LABELS[c.status] || c.status) + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
+    }).join('') + '</table>';
+}
+
+function notesHtml(r) {
+  var notes = r.notes || {};
+  if (typeof notes === 'string') { try { notes = JSON.parse(notes); } catch (e) { notes = {}; } }
+  var html = '';
+  Object.keys(TEXT_LABELS).forEach(function (k) { if (notes[k]) html += '<p style="margin:6px 0"><b>' + TEXT_LABELS[k] + ':</b> ' + esc(notes[k]) + '</p>'; });
+  if (r.positives) html += '<p style="margin:6px 0"><b>Wins:</b> ' + esc(r.positives) + '</p>';
+  if (r.challenges) html += '<p style="margin:6px 0"><b>Challenges:</b> ' + esc(r.challenges) + '</p>';
+  if (r.tomorrow) html += '<p style="margin:6px 0"><b>Plan for tomorrow:</b> ' + esc(r.tomorrow) + '</p>';
+  return html;
+}
+
+function numbersLine(m) {
+  return Object.keys(m || {}).filter(function (k) { return Number(m[k]) && LABELS[k]; })
+    .map(function (k) { return LABELS[k] + ': <b>' + fmtVal(k, m[k]) + '</b>'; }).join(' &nbsp;|&nbsp; ');
+}
+
+function frame(title, sub, body) {
+  return '<div style="font-family:Arial,sans-serif;max-width:760px">' +
+    '<div style="background:#0E3B3A;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0"><div style="font-size:20px;font-weight:700">' + title + '</div><div style="color:#F4A93B">' + sub + '</div></div>' +
+    '<div style="border:1px solid #d9e2de;border-top:0;padding:16px 22px;border-radius:0 0 12px 12px">' + body + '</div></div>';
+}
+
 function emailSingleReport(r) {
   var to = managementEmails();
   if (!to.length) return;
-  var rows = Object.keys(r.metrics || {}).filter(function (k) { return Number(r.metrics[k]); }).map(function (k) {
-    return '<tr><td style="padding:6px 12px;border-bottom:1px solid #e6ece9">' + (LABELS[k] || k) + '</td><td style="padding:6px 12px;border-bottom:1px solid #e6ece9;text-align:right;font-weight:700">' + fmtVal(k, r.metrics[k]) + '</td></tr>';
-  }).join('');
-  var html = '<div style="font-family:Arial,sans-serif;max-width:560px">' +
-    '<div style="background:#0E3B3A;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0"><div style="font-size:20px;font-weight:700">EOD — ' + esc(r.name) + '</div><div style="color:#F4A93B">' + r.date + '</div></div>' +
-    '<div style="border:1px solid #d9e2de;border-top:0;padding:16px 22px;border-radius:0 0 12px 12px">' +
-    '<table style="width:100%;border-collapse:collapse;font-size:14px">' + rows + '</table>' +
-    (r.positives ? '<p><b>Wins today</b><br>' + esc(r.positives) + '</p>' : '') +
-    (r.challenges ? '<p><b>Challenges</b><br>' + esc(r.challenges) + '</p>' : '') +
-    (r.tomorrow ? '<p><b>Plan for tomorrow</b><br>' + esc(r.tomorrow) + '</p>' : '') +
-    '</div></div>';
-  MailApp.sendEmail({ to: to.join(','), subject: 'EOD: ' + r.name + ' — ' + r.date, htmlBody: html });
+  var calls = [], hiring = [];
+  try {
+    calls = getRecords('calls', r.date, r.date, r.employeeId).filter(function (c) { return c.status === 'interested'; });
+    hiring = getRecords('hiring', r.date, r.date, r.employeeId);
+  } catch (e) { /* tabs not set up yet */ }
+  var body = '<p style="font-size:14px">' + (numbersLine(r.metrics) || 'No call lists imported.') + '</p>' +
+    notesHtml(r) + interestedTable(calls) + hiringTable(hiring);
+  MailApp.sendEmail({ to: to.join(','), subject: 'EOD: ' + r.name + ' — ' + r.date, htmlBody: frame('EOD — ' + esc(r.name), r.date, body) });
 }
 
 function sendDailySummary(dateStr) {
@@ -263,27 +432,36 @@ function sendDailySummary(dateStr) {
   var done = {};
   reports.forEach(function (r) { done[r.employeeId] = r; });
 
+  var calls = [], hiring = [];
+  try { calls = getRecords('calls', date, date); hiring = getRecords('hiring', date, date); } catch (e) { /* not set up */ }
+
   var totals = {};
-  reports.forEach(function (r) { Object.keys(r.metrics).forEach(function (k) { totals[k] = (totals[k] || 0) + r.metrics[k]; }); });
-  var headline = ['sales_value', 'orders_converted', 'orders_cancelled', 'interviews_scheduled', 'hired', 'drivers_arranged', 'tasks_completed'];
+  reports.forEach(function (r) { Object.keys(r.metrics).forEach(function (k) { totals[k] = (totals[k] || 0) + (Number(r.metrics[k]) || 0); }); });
+  var headline = ['calls_made', 'interested_calls', 'orders', 'sales_value', 'sales_kg', 'sales_l', 'orders_cancelled', 'hr_calls', 'scheduled', 'joined'];
   var kpiCells = headline.map(function (k) {
-    return '<td style="padding:10px;text-align:center;border:1px solid #d9e2de"><div style="font-size:11px;color:#5e706e">' + LABELS[k] + '</div><div style="font-size:20px;font-weight:700;color:#0E3B3A">' + fmtVal(k, totals[k]) + '</div></td>';
+    return '<td style="padding:8px;text-align:center;border:1px solid #d9e2de"><div style="font-size:10px;color:#5e706e">' + LABELS[k] + '</div><div style="font-size:17px;font-weight:700;color:#0E3B3A">' + fmtVal(k, totals[k]) + '</div></td>';
   }).join('');
 
   var people = staff.map(function (e) {
     var r = done[e.id];
-    if (!r) return '<div style="padding:12px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#D6453D">— not submitted</span></div>';
-    var nums = Object.keys(r.metrics).filter(function (k) { return Number(r.metrics[k]); }).map(function (k) { return (LABELS[k] || k) + ': <b>' + fmtVal(k, r.metrics[k]) + '</b>'; }).join(' &nbsp;|&nbsp; ');
-    return '<div style="padding:12px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#2E9E6A">— submitted</span>' +
-      '<div style="font-size:13px;margin-top:4px">' + nums + '</div>' +
-      (r.positives ? '<div style="font-size:13px;margin-top:4px"><b>Wins:</b> ' + esc(r.positives) + '</div>' : '') +
-      (r.challenges ? '<div style="font-size:13px;margin-top:2px"><b>Challenges:</b> ' + esc(r.challenges) + '</div>' : '') + '</div>';
+    if (!r) return '<div style="padding:10px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#D6453D">— not submitted</span></div>';
+    return '<div style="padding:10px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#2E9E6A">— submitted</span>' +
+      '<div style="font-size:13px;margin-top:4px">' + numbersLine(r.metrics) + '</div><div style="font-size:13px">' + notesHtml(r) + '</div></div>';
   }).join('');
 
-  var html = '<div style="font-family:Arial,sans-serif;max-width:720px">' +
-    '<div style="background:#0E3B3A;color:#fff;padding:20px 24px;border-radius:12px 12px 0 0"><div style="font-size:22px;font-weight:700">Team EOD summary</div><div style="color:#F4A93B">' + date + ' — ' + reports.length + ' of ' + staff.length + ' submitted</div></div>' +
-    '<div style="border:1px solid #d9e2de;border-top:0;padding:18px 24px;border-radius:0 0 12px 12px">' +
-    '<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr>' + kpiCells + '</tr></table>' + people + '</div></div>';
+  var interested = calls.filter(function (c) { return c.status === 'interested'; });
+  var body = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr>' + kpiCells + '</tr></table>' +
+    interestedTable(interested) + hiringTable(hiring) + '<h3 style="margin:18px 0 6px">Team</h3>' + people;
 
-  MailApp.sendEmail({ to: to.join(','), subject: (getSetting('COMPANY_NAME') || 'Team') + ' — EOD summary ' + date, htmlBody: html });
+  MailApp.sendEmail({
+    to: to.join(','),
+    subject: (getSetting('COMPANY_NAME') || 'Team') + ' — EOD summary ' + date,
+    htmlBody: frame('Team EOD summary', date + ' — ' + reports.length + ' of ' + staff.length + ' submitted', body)
+  });
+}
+
+function fmtVal(k, v) {
+  if (/value|revenue/.test(k)) return inr(v);
+  var n = Number(v) || 0;
+  return Math.round(n * 100) / 100;
 }

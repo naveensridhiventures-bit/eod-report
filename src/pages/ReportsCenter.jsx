@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileSpreadsheet, FileText, FileType2, Loader2 } from 'lucide-react';
-import { fetchReports } from '../lib/api';
-import { perEmployee, exportExcel, exportPDF, exportCSV } from '../lib/reports';
+import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { fetchReports, fetchRecords } from '../lib/api';
+import { exportExcel, exportPDF } from '../lib/reports';
+import { perPerson, fmtQty } from '../lib/stats';
 import { weekRange, monthRange, addDays, fmtDate } from '../lib/date';
 import { inr, num } from '../lib/format';
 import { Avatar, Segmented, Loading, Empty } from '../components/ui';
@@ -28,39 +29,35 @@ export default function ReportsCenter({ user, employees, notify }) {
   const [kind, setKind] = useState('month');
   const [custom, setCustom] = useState(monthRange());
   const [who, setWho] = useState(canSeeAll ? 'all' : user.id);
-  const [reports, setReports] = useState(null);
+  const [data, setData] = useState(null);
   const [busy, setBusy] = useState('');
   const { from, to } = periodRange(kind, custom);
 
   useEffect(() => {
-    setReports(null);
-    fetchReports({ from, to, employeeId: who === 'all' ? undefined : who })
-      .then(setReports)
-      .catch((e) => { setReports([]); notify(e.message, 'error'); });
+    setData(null);
+    const employeeId = who === 'all' ? undefined : who;
+    Promise.all([fetchRecords({ from, to, employeeId }), fetchReports({ from, to, employeeId })])
+      .then(([records, reports]) => setData({ records, reports }))
+      .catch((e) => { setData({ records: { calls: [], orders: [], customers: [], cancellations: [], hiring: [] }, reports: [] }); notify(e.message, 'error'); });
   }, [from, to, who, notify]);
 
   const staff = useMemo(() => employees.filter((e) => !e.viewOnly && (who === 'all' || e.id === who)), [employees, who]);
-  const people = useMemo(() => perEmployee(reports || [], staff), [reports, staff]);
+  const people = useMemo(() => (data ? perPerson(data.records, staff, { from, to }) : []), [data, staff, from, to]);
   const person = employees.find((e) => e.id === who);
   const title = who === 'all' ? 'Team performance report' : `${person?.name || user.name} performance report`;
+  const total = data ? data.reports.length + Object.values(data.records).reduce((s, l) => s + l.length, 0) : 0;
 
   const run = async (type, fn) => {
-    if (!reports?.length) { notify('There are no reports in this period to download.', 'error'); return; }
+    if (!total) { notify('There’s nothing in this period to download.', 'error'); return; }
     setBusy(type);
-    try {
-      await fn({ reports, employees: staff, from, to, title });
-      notify(`${type} downloaded`);
-    } catch (e) {
-      notify(`Download failed: ${e.message}`, 'error');
-    } finally {
-      setBusy('');
-    }
+    try { await fn({ ...data, employees: staff, from, to, title }); notify(`${type} downloaded`); }
+    catch (e) { notify(`Download failed: ${e.message}`, 'error'); }
+    finally { setBusy(''); }
   };
 
   const downloads = [
-    { type: 'Excel', desc: 'Summary, a sheet per role, daily notes', icon: FileSpreadsheet, color: '#1D7049', fn: exportExcel },
-    { type: 'PDF', desc: 'Formatted report to print or forward', icon: FileText, color: '#D6453D', fn: exportPDF },
-    { type: 'CSV', desc: 'Raw data for any spreadsheet tool', icon: FileType2, color: '#5E706E', fn: exportCSV }
+    { type: 'Excel', desc: 'Summary plus every call, order, customer and update', icon: FileSpreadsheet, color: '#1D7049', fn: exportExcel },
+    { type: 'PDF', desc: 'Simple report with interested calls highlighted', icon: FileText, color: '#D6453D', fn: exportPDF }
   ];
 
   return (
@@ -68,7 +65,7 @@ export default function ReportsCenter({ user, employees, notify }) {
       <div className="page-head">
         <div>
           <h1>Download reports</h1>
-          <p>Weekly, monthly or any date range — as Excel, PDF or CSV.</p>
+          <p>Weekly, monthly or any date range — as Excel or PDF.</p>
         </div>
       </div>
 
@@ -92,13 +89,13 @@ export default function ReportsCenter({ user, employees, notify }) {
           )}
         </div>
         <p className="muted" style={{ fontSize: 14 }}>
-          {fmtDate(from)} to {fmtDate(to)} — {reports ? `${reports.length} daily reports found` : 'loading…'}
+          {fmtDate(from)} to {fmtDate(to)} — {data ? `${data.reports.length} daily reports, ${data.records.calls.length} calls, ${data.records.hiring.length} HR calls` : 'loading…'}
         </p>
       </div>
 
       <div className="download-row" style={{ marginBottom: 16 }}>
         {downloads.map((d) => (
-          <button key={d.type} className="dl-card" onClick={() => run(d.type, d.fn)} disabled={!!busy}>
+          <button key={d.type} className="dl-card" onClick={() => run(d.type, d.fn)} disabled={!!busy || !data}>
             <span className="ic" style={{ background: d.color }}>{busy === d.type ? <Loader2 size={20} className="spin" /> : <d.icon size={20} />}</span>
             <span><span className="t">Download {d.type}</span><br /><span className="s">{d.desc}</span></span>
           </button>
@@ -107,29 +104,32 @@ export default function ReportsCenter({ user, employees, notify }) {
 
       <div className="panel">
         <div className="panel-head"><h3>Preview</h3></div>
-        {!reports ? <Loading /> : reports.length === 0 ? (
-          <Empty title="Nothing to show for these dates">Try a different period or person.</Empty>
-        ) : (
+        {!data ? <Loading /> : !total ? <Empty title="Nothing to show for these dates">Try a different period or person.</Empty> : (
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Person</th><th className="r">Days</th><th className="r">Converted</th><th className="r">Sales value</th>
-                  <th className="r">Cancelled</th><th className="r">Scheduled</th><th className="r">Hired</th><th className="r">Drivers</th><th className="r">Dev tasks</th>
+                  <th>Person</th><th className="r">Calls</th><th className="r">Interested</th><th className="r">Orders</th><th className="r">Sales</th>
+                  <th className="r">kg</th><th className="r">L</th><th className="r">Cancelled</th><th className="r">Customers</th>
+                  <th className="r">HR calls</th><th className="r">Scheduled</th><th className="r">Joined</th><th className="r">Relieved</th>
                 </tr>
               </thead>
               <tbody>
-                {people.map((p) => (
-                  <tr key={p.employee.id}>
-                    <td><span className="cell-person"><Avatar person={p.employee} />{p.employee.name}</span></td>
-                    <td className="r">{p.days}</td>
-                    <td className="r">{num(p.totals.orders_converted)}</td>
-                    <td className="r">{inr(p.totals.sales_value)}</td>
-                    <td className="r">{num(p.totals.orders_cancelled)}</td>
-                    <td className="r">{num(p.totals.interviews_scheduled)}</td>
-                    <td className="r">{num(p.totals.hired)}</td>
-                    <td className="r">{num(p.totals.drivers_arranged)}</td>
-                    <td className="r">{num(p.totals.tasks_completed)}</td>
+                {people.map(({ employee: e, s }) => (
+                  <tr key={e.id}>
+                    <td><span className="cell-person"><Avatar person={e} />{e.name}</span></td>
+                    <td className="r">{num(s.calls_made)}</td>
+                    <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(s.interested_calls)}</td>
+                    <td className="r">{num(s.orders)}</td>
+                    <td className="r">{inr(s.sales_value)}</td>
+                    <td className="r">{fmtQty(s.sales_kg)}</td>
+                    <td className="r">{fmtQty(s.sales_l)}</td>
+                    <td className="r">{num(s.orders_cancelled)}</td>
+                    <td className="r">{num(s.customers_total)}</td>
+                    <td className="r">{num(s.hr_calls)}</td>
+                    <td className="r">{num(s.scheduled)}</td>
+                    <td className="r">{num(s.joined)}</td>
+                    <td className="r">{num(s.relieved)}</td>
                   </tr>
                 ))}
               </tbody>
