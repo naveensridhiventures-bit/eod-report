@@ -33,6 +33,65 @@ async function post(body) {
   return json.data;
 }
 
+// ── Speed: instant-from-cache, refresh in the background ──────
+// Show the last result straight away, then quietly fetch the fresh one and hand it to onUpdate.
+// Cache is dropped after any save/delete and on sign-out.
+const CACHE_PREFIX = 'pulse_cache_v1:';
+const mem = new Map();
+const inflight = new Map();
+let gen = 0;
+
+function readCache(key) {
+  if (mem.has(key)) return mem.get(key);
+  try {
+    const s = localStorage.getItem(CACHE_PREFIX + key);
+    if (s) { const v = JSON.parse(s); mem.set(key, v); return v; }
+  } catch { /* ignore */ }
+  return undefined;
+}
+
+function dropStored() {
+  try { Object.keys(localStorage).filter((k) => k.startsWith(CACHE_PREFIX)).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+}
+
+function writeCache(key, value) {
+  mem.set(key, value);
+  try {
+    const s = JSON.stringify(value);
+    if (s.length < 1000000) localStorage.setItem(CACHE_PREFIX + key, s);
+  } catch { dropStored(); }
+}
+
+export function clearCache() {
+  gen++;
+  mem.clear();
+  inflight.clear();
+  dropStored();
+}
+
+function swr(key, loader, onUpdate) {
+  const cached = readCache(key);
+  const myGen = gen;
+  if (!inflight.has(key)) inflight.set(key, loader().finally(() => { if (gen === myGen) inflight.delete(key); }));
+  const request = inflight.get(key);
+  if (cached === undefined) {
+    return request.then((fresh) => { if (gen === myGen) writeCache(key, fresh); return fresh; });
+  }
+  request.then((fresh) => {
+    if (gen !== myGen) return;
+    const changed = JSON.stringify(fresh) !== JSON.stringify(cached);
+    writeCache(key, fresh);
+    if (changed && onUpdate) onUpdate(fresh);
+  }).catch(() => { /* keep showing the cached copy */ });
+  return Promise.resolve(cached);
+}
+
+const sortReports = (list) => [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
+const sortRecords = (out) => {
+  Object.values(out).forEach((list) => list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  return out;
+};
+
 // ── Demo storage (browser only) ────────────────────────────────
 const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full */ } };
@@ -115,9 +174,15 @@ const inRange = (r, from, to, employeeId) =>
   (!from || r.date >= from) && (!to || r.date <= to) && (!employeeId || r.employeeId === employeeId);
 
 // ── Public API ─────────────────────────────────────────────────
-export async function fetchEmployees() {
+export function peekEmployees() {
+  if (IS_DEMO) return null;
+  const c = readCache('employees');
+  return c ? c.map(normaliseEmployee) : null;
+}
+
+export async function fetchEmployees(onUpdate) {
   if (IS_DEMO) return DEFAULT_EMPLOYEES.map(({ pin, ...e }) => e);
-  const list = await get({ action: 'employees' });
+  const list = await swr('employees', () => get({ action: 'employees' }), onUpdate && ((l) => onUpdate(l.map(normaliseEmployee))));
   return list.map(normaliseEmployee);
 }
 
@@ -131,17 +196,27 @@ export async function login(employeeId, pin) {
   return normaliseEmployee(await post({ action: 'login', employeeId, pin }));
 }
 
-export async function fetchReports({ from, to, employeeId } = {}) {
-  let list;
-  if (IS_DEMO) list = demoData().reports.filter((r) => inRange(r, from, to, employeeId));
-  else {
-    const params = { action: 'reports' };
-    if (from) params.from = from;
-    if (to) params.to = to;
-    if (employeeId) params.employeeId = employeeId;
-    list = await get(params);
+export async function fetchReports({ from, to, employeeId } = {}, onUpdate) {
+  if (IS_DEMO) return sortReports(demoData().reports.filter((r) => inRange(r, from, to, employeeId)));
+  const params = { action: 'reports' };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  if (employeeId) params.employeeId = employeeId;
+  return swr(`reports|${from || ''}|${to || ''}|${employeeId || ''}`, () => get(params).then(sortReports), onUpdate);
+}
+
+/** Reports + records in a single request. Returns { reports, records }. */
+export async function fetchBundle({ types = TYPE_KEYS, from, to, employeeId } = {}, onUpdate) {
+  if (IS_DEMO) {
+    const [reports, records] = await Promise.all([fetchReports({ from, to, employeeId }), fetchRecords({ types, from, to, employeeId })]);
+    return { reports, records };
   }
-  return list.sort((a, b) => (a.date < b.date ? 1 : -1));
+  const params = { action: 'bundle', types: types.join(',') };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  if (employeeId) params.employeeId = employeeId;
+  const load = () => get(params).then((d) => ({ reports: sortReports(d.reports || []), records: sortRecords({ ...Object.fromEntries(types.map((t) => [t, []])), ...(d.records || {}) }) }));
+  return swr(`bundle|${types.join(',')}|${from || ''}|${to || ''}|${employeeId || ''}`, load, onUpdate);
 }
 
 export async function saveReport(report) {
@@ -151,31 +226,32 @@ export async function saveReport(report) {
     lsSet(LS_REPORTS, [...reports.filter((r) => r.id !== full.id), full]);
     return full;
   }
-  return post({ action: 'saveReport', report: full });
+  const saved = await post({ action: 'saveReport', report: full });
+  clearCache();
+  return saved;
 }
 
 /**
  * Returns { calls: [], orders: [], customers: [], cancellations: [], hiring: [] }.
  * Customers are always returned in full (not limited by date) so totals are all-time.
  */
-export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } = {}) {
-  const out = {};
-  types.forEach((t) => { out[t] = []; });
+export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } = {}, onUpdate) {
+  const empty = () => { const out = {}; types.forEach((t) => { out[t] = []; }); return out; };
   if (IS_DEMO) {
+    const out = empty();
     demoData().records.forEach((r) => {
       if (!out[r.type_]) return;
       const ok = r.type_ === 'customers' ? (!employeeId || r.employeeId === employeeId) : inRange(r, from, to, employeeId);
       if (ok) out[r.type_].push(r);
     });
-  } else {
-    const params = { action: 'records', types: types.join(',') };
-    if (from) params.from = from;
-    if (to) params.to = to;
-    if (employeeId) params.employeeId = employeeId;
-    Object.assign(out, await get(params));
+    return sortRecords(out);
   }
-  Object.values(out).forEach((list) => list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
-  return out;
+  const params = { action: 'records', types: types.join(',') };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  if (employeeId) params.employeeId = employeeId;
+  const load = () => get(params).then((d) => sortRecords({ ...empty(), ...d }));
+  return swr(`records|${types.join(',')}|${from || ''}|${to || ''}|${employeeId || ''}`, load, onUpdate);
 }
 
 export async function saveRecords(type, rows, { date, employeeId, employee }) {
@@ -192,7 +268,9 @@ export async function saveRecords(type, rows, { date, employeeId, employee }) {
     lsSet(LS_RECORDS, [...next, ...records.map((r) => ({ ...r, type_: type }))]);
     return records;
   }
-  return post({ action: 'saveRecords', type, records });
+  const saved = await post({ action: 'saveRecords', type, records });
+  clearCache();
+  return saved;
 }
 
 export async function deleteRecord(type, id) {
@@ -201,7 +279,9 @@ export async function deleteRecord(type, id) {
     lsSet(LS_RECORDS, records.filter((r) => r.id !== id));
     return true;
   }
-  return post({ action: 'deleteRecord', type, id });
+  const res = await post({ action: 'deleteRecord', type, id });
+  clearCache();
+  return res;
 }
 
 export async function emailEODNow(date) {

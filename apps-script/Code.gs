@@ -113,19 +113,27 @@ function createDailyTrigger() {
 function doGet(e) {
   try {
     var p = e.parameter || {};
-    if (p.action === 'employees') return json(ok(getEmployees(false)));
-    if (p.action === 'reports') return json(ok(getReports(p.from, p.to, p.employeeId)));
-    if (p.action === 'records') {
-      var out = {};
-      String(p.types || Object.keys(RECORD_SHEETS).join(',')).split(',').forEach(function (t) {
-        if (RECORD_SHEETS[t]) out[t] = getRecords(t, t === 'customers' ? '' : p.from, t === 'customers' ? '' : p.to, p.employeeId);
-      });
-      return json(ok(out));
+    if (p.action === 'employees') return raw(cached('employees', {}, function () { return getEmployees(false); }));
+    if (p.action === 'reports') return raw(cached('reports', p, function () { return getReports(p.from, p.to, p.employeeId); }));
+    if (p.action === 'records') return raw(cached('records', p, function () { return recordsFor(p); }));
+    // One round trip for reports + records together (used by dashboards and reports)
+    if (p.action === 'bundle') {
+      return raw(cached('bundle', p, function () {
+        return { reports: getReports(p.from, p.to, p.employeeId), records: recordsFor(p) };
+      }));
     }
     return json(fail('Unknown action'));
   } catch (err) {
     return json(fail(err.message));
   }
+}
+
+function recordsFor(p) {
+  var out = {};
+  String(p.types || Object.keys(RECORD_SHEETS).join(',')).split(',').forEach(function (t) {
+    if (RECORD_SHEETS[t]) out[t] = getRecords(t, t === 'customers' ? '' : p.from, t === 'customers' ? '' : p.to, p.employeeId);
+  });
+  return out;
 }
 
 function doPost(e) {
@@ -141,6 +149,61 @@ function doPost(e) {
     return json(fail(err.message));
   }
 }
+
+// ── Speed: server-side cache ──────────────────────────────────
+// Results are cached (compressed) for 10 minutes and thrown away the moment anyone saves or
+// deletes something. If you edit the Google Sheet by hand, run refreshCache() to see it at once.
+var CACHE_TTL = 600;
+
+function cacheVer() {
+  var c = CacheService.getScriptCache();
+  var v = c.get('ver');
+  if (!v) { v = String(Date.now()); c.put('ver', v, 21600); }
+  return v;
+}
+function bumpCache() { CacheService.getScriptCache().put('ver', String(Date.now()), 21600); }
+function refreshCache() { bumpCache(); }
+
+function cacheGet(key) {
+  var c = CacheService.getScriptCache();
+  var n = Number(c.get(key));
+  if (!n) return null;
+  var keys = [];
+  for (var i = 0; i < n; i++) keys.push(key + '~' + i);
+  var parts = c.getAll(keys);
+  var b64 = '';
+  for (var j = 0; j < n; j++) {
+    var part = parts[key + '~' + j];
+    if (!part) return null;
+    b64 += part;
+  }
+  return Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(b64), 'application/x-gzip', 'd.gz')).getDataAsString();
+}
+
+function cachePut(key, str) {
+  try {
+    var b64 = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(str, 'application/json', 'd.json')).getBytes());
+    var size = 90000;
+    var n = Math.ceil(b64.length / size);
+    if (n > 20) return; // too big to cache; just skip
+    var obj = {};
+    for (var i = 0; i < n; i++) obj[key + '~' + i] = b64.substr(i * size, size);
+    obj[key] = String(n);
+    CacheService.getScriptCache().putAll(obj, CACHE_TTL);
+  } catch (err) { /* caching is best-effort */ }
+}
+
+function cached(name, params, fn) {
+  var key = cacheVer() + '|' + name + '|' + [params.from || '', params.to || '', params.employeeId || '', params.types || ''].join('|');
+  var hit = null;
+  try { hit = cacheGet(key); } catch (err) { hit = null; }
+  if (hit) return hit;
+  var str = JSON.stringify(ok(fn()));
+  cachePut(key, str);
+  return str;
+}
+
+function raw(str) { return ContentService.createTextOutput(str).setMimeType(ContentService.MimeType.JSON); }
 
 function json(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
 function ok(data) { return { ok: true, data: data }; }
@@ -213,11 +276,34 @@ function saveReport(report) {
   } finally {
     lock.releaseLock();
   }
+  bumpCache();
 
-  if (String(getSetting('NOTIFY_ON_SUBMIT')).toLowerCase() === 'yes') {
-    try { emailSingleReport(report); } catch (err) { console.error(err); }
-  }
+  // Email in the background so the person isn't kept waiting on Gmail
+  if (String(getSetting('NOTIFY_ON_SUBMIT')).toLowerCase() === 'yes') queueReportEmail(report);
   return report;
+}
+
+function queueReportEmail(report) {
+  try {
+    PropertiesService.getScriptProperties().setProperty('PENDING_EMAIL_' + report.employeeId + '_' + report.date, JSON.stringify(report));
+    ScriptApp.newTrigger('flushEmails').timeBased().after(1000).create();
+  } catch (err) {
+    console.error(err);
+    try { emailSingleReport(report); } catch (err2) { console.error(err2); }
+  }
+}
+
+function flushEmails() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'flushEmails') ScriptApp.deleteTrigger(t);
+  });
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf('PENDING_EMAIL_') !== 0) return;
+    props.deleteProperty(k);
+    try { emailSingleReport(JSON.parse(all[k])); } catch (err) { console.error(err); }
+  });
 }
 
 function getReports(from, to, employeeId) {
@@ -267,24 +353,24 @@ function saveRecords(type, records) {
   lock.waitLock(20000);
   try {
     if (type === 'customers') {
-      // One row per customer per telecaller: update if the number is already there
+      // One row per customer per telecaller: update if the number is already there (one read, one write)
       var last = sh.getLastRow();
+      var phIdx = RECORD_BASE.length + def.cols.indexOf('phone');
+      var data = last > 1 ? sh.getRange(2, 1, last - 1, headers.length).getDisplayValues() : [];
       var existing = {};
-      if (last > 1) {
-        var empCol = sh.getRange(2, 3, last - 1, 1).getDisplayValues();
-        var phCol = sh.getRange(2, RECORD_BASE.length + def.cols.indexOf('phone') + 1, last - 1, 1).getDisplayValues();
-        for (var i = 0; i < phCol.length; i++) if (phCol[i][0]) existing[empCol[i][0] + '|' + phCol[i][0]] = i + 2;
-      }
+      for (var i = 0; i < data.length; i++) if (data[i][phIdx]) existing[data[i][2] + '|' + data[i][phIdx]] = i;
       var fresh = [];
+      var touched = false;
       rows.forEach(function (row, idx) {
         var key = records[idx].employeeId + '|' + (records[idx].phone || '');
-        if (records[idx].phone && existing[key]) {
-          var at = existing[key];
-          var old = sh.getRange(at, 1, 1, headers.length).getValues()[0];
+        if (records[idx].phone && existing[key] !== undefined) {
+          var old = data[existing[key]];
           row[0] = old[0]; row[1] = old[1]; row[4] = old[4]; // keep first-added date
-          sh.getRange(at, 1, 1, headers.length).setValues([row]);
+          data[existing[key]] = row;
+          touched = true;
         } else fresh.push(row);
       });
+      if (touched) sh.getRange(2, 1, data.length, headers.length).setValues(data);
       rows = fresh;
     }
     if (rows.length) {
@@ -296,6 +382,7 @@ function saveRecords(type, records) {
   } finally {
     lock.releaseLock();
   }
+  bumpCache();
   return records;
 }
 
@@ -333,7 +420,7 @@ function deleteRecord(type, id) {
   if (last < 2) return false;
   var ids = sh.getRange(2, 1, last - 1, 1).getDisplayValues();
   for (var i = ids.length - 1; i >= 0; i--) {
-    if (ids[i][0] === id) { sh.deleteRow(i + 2); return true; }
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); bumpCache(); return true; }
   }
   return false;
 }

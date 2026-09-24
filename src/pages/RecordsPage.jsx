@@ -36,10 +36,12 @@ export default function RecordsPage({ user, employees, notify }) {
   const { from, to } = rangeFor(kind, custom);
 
   const load = () => {
+    let live = true;
     setRecords(null);
-    fetchRecords({ types: myTypes, from, to, employeeId: who === 'all' ? undefined : who })
-      .then(setRecords)
-      .catch((e) => { setRecords({}); notify(e.message, 'error'); });
+    fetchRecords({ types: myTypes, from, to, employeeId: who === 'all' ? undefined : who }, (r) => { if (live) setRecords(r); })
+      .then((r) => { if (live) setRecords(r); })
+      .catch((e) => { if (live) { setRecords({}); notify(e.message, 'error'); } });
+    return () => { live = false; };
   };
   useEffect(load, [from, to, who, myTypes]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setStatus('all'); }, [type]);

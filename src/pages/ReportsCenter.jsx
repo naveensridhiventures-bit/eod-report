@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
-import { fetchReports, fetchRecords } from '../lib/api';
+import { fetchBundle } from '../lib/api';
 import { exportExcel, exportPDF } from '../lib/reports';
 import { perPerson, fmtQty } from '../lib/stats';
 import { weekRange, monthRange, addDays, fmtDate } from '../lib/date';
@@ -34,11 +34,13 @@ export default function ReportsCenter({ user, employees, notify }) {
   const { from, to } = periodRange(kind, custom);
 
   useEffect(() => {
+    let live = true;
     setData(null);
     const employeeId = who === 'all' ? undefined : who;
-    Promise.all([fetchRecords({ from, to, employeeId }), fetchReports({ from, to, employeeId })])
-      .then(([records, reports]) => setData({ records, reports }))
-      .catch((e) => { setData({ records: { calls: [], orders: [], customers: [], cancellations: [], hiring: [] }, reports: [] }); notify(e.message, 'error'); });
+    fetchBundle({ from, to, employeeId }, (d) => { if (live) setData(d); })
+      .then((d) => { if (live) setData(d); })
+      .catch((e) => { if (live) { setData({ records: { calls: [], orders: [], customers: [], cancellations: [], hiring: [] }, reports: [] }); notify(e.message, 'error'); } });
+    return () => { live = false; };
   }, [from, to, who, notify]);
 
   const staff = useMemo(() => employees.filter((e) => !e.viewOnly && (who === 'all' || e.id === who)), [employees, who]);

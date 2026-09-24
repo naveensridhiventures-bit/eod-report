@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ROLES } from '../config/team';
-import { fetchReports, fetchRecords } from '../lib/api';
+import { fetchBundle } from '../lib/api';
 import { statsFor } from '../lib/stats';
 import { monthRange } from '../lib/date';
 import { Loading, Empty, ROLE_ICONS } from '../components/ui';
@@ -37,10 +37,13 @@ export default function MyReports({ user, notify, goTo }) {
   const { from, to } = monthRange(ref);
 
   useEffect(() => {
+    let live = true;
+    const apply = ({ reports: rep, records: rec }) => { if (live) { setReports(rep); setRecords(rec); } };
     setReports(null);
-    Promise.all([fetchReports({ employeeId: user.id, from, to }), fetchRecords({ employeeId: user.id, from, to })])
-      .then(([rep, rec]) => { setReports(rep); setRecords(rec); })
-      .catch((e) => { setReports([]); setRecords({}); notify(e.message, 'error'); });
+    fetchBundle({ employeeId: user.id, from, to }, apply)
+      .then(apply)
+      .catch((e) => { if (live) { setReports([]); setRecords({}); notify(e.message, 'error'); } });
+    return () => { live = false; };
   }, [user.id, from, to, notify]);
 
   const stats = useMemo(() => statsFor(records || {}, { from, to }), [records, from, to]);

@@ -85,6 +85,13 @@ Employees open the link on their phone and choose **Add to Home Screen** (Androi
 - **Call data** page → search and filter every call, order, customer, cancellation and HR call by date, person and status; download any list to Excel.
 - **Download reports** → This week / Last week / This month / Last month / Custom dates, whole team or one person, as Excel (summary, interested calls, all calls, orders, cancelled, customers, HR calls, daily updates) or PDF (simple report with interested calls highlighted).
 
+## Speed
+
+- Pages show the last loaded data instantly and refresh quietly in the background (cache is cleared on save, delete and sign-out).
+- Dashboards and reports fetch everything in one request; Apps Script also caches results for 10 minutes and clears them on every save. If you edit the Sheet by hand, run `refreshCache` in Apps Script to see it immediately.
+- Submitting a report no longer waits for the management email: it is sent a second later in the background.
+- Charts, Excel and PDF code load only when those pages are opened.
+
 ## Customising
 
 - Statuses, import columns and text boxes: `src/config/team.js`. Keyword rules for auto-tagging: `src/lib/parse.js`.

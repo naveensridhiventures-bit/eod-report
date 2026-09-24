@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { Mail, Loader2, PhoneCall, UserPlus, Star, MessageSquareText, Phone } from 'lucide-react';
 
-import { fetchReports, fetchRecords, emailEODNow, IS_DEMO } from '../lib/api';
+import { fetchReports, fetchBundle, emailEODNow, IS_DEMO } from '../lib/api';
 import { statsFor, perPerson, fmtQty } from '../lib/stats';
 import { TEXT_FIELDS } from '../lib/reports';
 import { todayISO, weekRange, monthRange, fmtDate, fromISO, daysBetween } from '../lib/date';
@@ -37,13 +37,21 @@ export default function TeamDashboard({ employees, notify, goTo }) {
   const { from, to } = rangeFor(kind, custom);
 
   useEffect(() => {
+    let live = true;
+    const apply = ({ records: rec, reports: rep }) => { if (live) { setRecords(rec); setReports(rep); } };
     setRecords(null);
-    Promise.all([fetchRecords({ from, to }), fetchReports({ from, to })])
-      .then(([rec, rep]) => { setRecords(rec); setReports(rep); })
-      .catch((e) => { setRecords({ calls: [], orders: [], customers: [], cancellations: [], hiring: [] }); notify(e.message, 'error'); });
+    fetchBundle({ from, to }, apply)
+      .then(apply)
+      .catch((e) => { if (live) { setRecords({ calls: [], orders: [], customers: [], cancellations: [], hiring: [] }); notify(e.message, 'error'); } });
+    return () => { live = false; };
   }, [from, to, notify]);
 
-  useEffect(() => { fetchReports({ from: todayISO(), to: todayISO() }).then(setTodays).catch(() => {}); }, []);
+  useEffect(() => {
+    let live = true;
+    const t = { from: todayISO(), to: todayISO() };
+    fetchReports(t, (l) => { if (live) setTodays(l); }).then((l) => { if (live) setTodays(l); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   const staff = useMemo(() => employees.filter((e) => !e.viewOnly), [employees]);
   const t = useMemo(() => (records ? statsFor(records, { from, to }) : null), [records, from, to]);

@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
-import MyReports from './pages/MyReports';
-import TeamDashboard from './pages/TeamDashboard';
-import ReportsCenter from './pages/ReportsCenter';
-import RecordsPage from './pages/RecordsPage';
 import { Avatar, Toast } from './components/ui';
-import { fetchEmployees, IS_DEMO } from './lib/api';
+import { fetchEmployees, peekEmployees, clearCache, IS_DEMO } from './lib/api';
+
+// Heavy pages (charts, exports) load only when opened, so the app starts fast
+const MyReports = lazy(() => import('./pages/MyReports'));
+const TeamDashboard = lazy(() => import('./pages/TeamDashboard'));
+const ReportsCenter = lazy(() => import('./pages/ReportsCenter'));
+const RecordsPage = lazy(() => import('./pages/RecordsPage'));
 
 const SESSION_KEY = 'pulse_user_v1';
 
@@ -25,7 +27,7 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
   });
-  const [employees, setEmployees] = useState([]);
+  const [employees, setEmployees] = useState(() => peekEmployees() || []);
   const [page, setPage] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -33,7 +35,7 @@ export default function App() {
   const clearToast = useCallback(() => setToast(null), []);
 
   useEffect(() => {
-    fetchEmployees().then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
+    fetchEmployees(setEmployees).then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
   }, [notify]);
 
   useEffect(() => {
@@ -47,6 +49,7 @@ export default function App() {
   };
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
+    clearCache();
     setUser(null);
     setPage(null);
   };
@@ -97,11 +100,13 @@ export default function App() {
         </header>
         {IS_DEMO && <div className="demo-banner">Demo mode — reports are saved in this browser only. Add your Google Sheet link to go live.</div>}
 
-        {page === 'today' && <DailyEntry {...props} />}
-        {page === 'history' && <MyReports {...props} />}
-        {page === 'team' && <TeamDashboard {...props} />}
-        {page === 'reports' && <ReportsCenter {...props} />}
-        {page === 'records' && <RecordsPage {...props} />}
+        <Suspense fallback={<div className="page"><p style={{ opacity: 0.6 }}>Loading…</p></div>}>
+          {page === 'today' && <DailyEntry {...props} />}
+          {page === 'history' && <MyReports {...props} />}
+          {page === 'team' && <TeamDashboard {...props} />}
+          {page === 'reports' && <ReportsCenter {...props} />}
+          {page === 'records' && <RecordsPage {...props} />}
+        </Suspense>
       </div>
 
       <nav className="tabbar" aria-label="Main">

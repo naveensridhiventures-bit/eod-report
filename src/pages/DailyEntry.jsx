@@ -97,27 +97,35 @@ export default function DailyEntry({ user, notify }) {
   const hasImports = user.roles.some((r) => ROLES[r]?.imports.length);
 
   useEffect(() => {
-    fetchReports({ employeeId: user.id, from: toISO(addDays(new Date(), -120)) })
-      .then(setHistory)
-      .catch((e) => { setHistory([]); notify(`Couldn’t load your past reports: ${e.message}`, 'error'); });
+    let live = true;
+    const q = { employeeId: user.id, from: toISO(addDays(new Date(), -120)) };
+    fetchReports(q, (fresh) => { if (live) setHistory(fresh); })
+      .then((r) => { if (live) setHistory(r); })
+      .catch((e) => { if (live) { setHistory([]); notify(`Couldn’t load your past reports: ${e.message}`, 'error'); } });
+    return () => { live = false; };
   }, [user.id, notify]);
 
   const loadRecords = useCallback(() => {
     if (!hasImports) { setRecords({}); return; }
-    fetchRecords({ employeeId: user.id, from: date, to: date })
-      .then(setRecords)
-      .catch((e) => { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); });
+    const stale = { current: false };
+    const q = { employeeId: user.id, from: date, to: date };
+    fetchRecords(q, (fresh) => { if (!stale.current) setRecords(fresh); })
+      .then((r) => { if (!stale.current) setRecords(r); })
+      .catch((e) => { if (!stale.current) { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); } });
+    return () => { stale.current = true; };
   }, [user.id, date, hasImports, notify]);
 
-  useEffect(() => { setRecords(null); loadRecords(); }, [loadRecords]);
+  useEffect(() => { setRecords(null); return loadRecords(); }, [loadRecords]);
 
   const existing = useMemo(() => history?.find((r) => r.date === date), [history, date]);
+  // Only reset the form when the saved report itself changes, so a background refresh never wipes what you're typing
+  const existingKey = existing ? `${existing.id}|${existing.submittedAt}` : '';
   useEffect(() => {
     if (!history) return;
     setForm(existing
       ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0 }
       : blankForm());
-  }, [existing, history]);
+  }, [existingKey, !!history]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const streak = useMemo(() => calcStreak((history || []).map((r) => r.date)), [history]);
   const dayRecs = useMemo(() => (records ? recordsOnDate(records, date) : {}), [records, date]);
