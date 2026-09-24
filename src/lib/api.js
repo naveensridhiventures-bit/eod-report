@@ -3,7 +3,7 @@ import { toISO, addDays } from './date';
 import { classifyCall, classifyHiring } from './parse';
 
 // Live Google Apps Script web app. A VITE_SHEETS_API_URL in .env overrides it.
-const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxL0pNs5zmPk9kcWH5Y3n4IGXsbmBqa8tRT4LkKtvNXPRlsZXZipcxXbuateOpfTZFdBQ/exec';
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbyYOSeaLmsUZAB7GMwBisOWg-FgaOO9wWY9wJ_JHLG7-SVCKT0ZWBWp_qsfcRJTvt27Zw/exec';
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
