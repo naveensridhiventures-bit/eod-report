@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact } from 'lucide-react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings as SettingsIcon } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
 import { Avatar, Toast } from './components/ui';
@@ -10,6 +10,7 @@ const MyReports = lazy(() => import('./pages/MyReports'));
 const TeamDashboard = lazy(() => import('./pages/TeamDashboard'));
 const ReportsCenter = lazy(() => import('./pages/ReportsCenter'));
 const RecordsPage = lazy(() => import('./pages/RecordsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const SESSION_KEY = 'pulse_user_v1';
 
@@ -68,7 +69,8 @@ export default function App() {
     !user.viewOnly && { key: 'history', label: 'My reports', short: 'Mine', icon: History },
     user.isAdmin && { key: 'team', label: 'Team dashboard', short: 'Team', icon: LayoutDashboard },
     (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'records', label: 'Call data', short: 'Data', icon: Contact },
-    { key: 'reports', label: 'Download reports', short: 'Download', icon: FileDown }
+    { key: 'reports', label: 'Download reports', short: 'Download', icon: FileDown },
+    user.isAdmin && { key: 'settings', label: 'Settings', short: 'Settings', icon: SettingsIcon }
   ].filter(Boolean);
 
   const props = { user, employees, notify, goTo: setPage };
@@ -106,6 +108,7 @@ export default function App() {
           {page === 'team' && <TeamDashboard {...props} />}
           {page === 'reports' && <ReportsCenter {...props} />}
           {page === 'records' && <RecordsPage {...props} />}
+          {page === 'settings' && <SettingsPage {...props} />}
         </Suspense>
       </div>
 

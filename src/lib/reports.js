@@ -36,6 +36,7 @@ export function eodText(report, dayRecords) {
   TEXT_FIELDS.forEach((f) => { if (report.notes?.[f.key]) lines.push(`*${f.short}:* ${report.notes[f.key]}`); });
   if (report.positives) lines.push(`*Wins today:* ${report.positives}`);
   if (report.challenges) lines.push(`*Challenges:* ${report.challenges}`);
+  if (report.other) lines.push(`*Other work:* ${report.other}`);
   if (report.tomorrow) lines.push(`*Plan for tomorrow:* ${report.tomorrow}`);
   if (report.mood) lines.push(`*Day rating:* ${moodLabel(report.mood)}`);
   return lines.join('\n');
@@ -84,7 +85,7 @@ function updateRows(reports) {
   return [...reports].sort(byDateAsc).map((r) => {
     const row = { Date: r.date, Employee: r.name };
     TEXT_FIELDS.forEach((f) => { row[f.short] = r.notes?.[f.key] || ''; });
-    Object.assign(row, { 'Wins today': r.positives || '', Challenges: r.challenges || '', 'Plan for tomorrow': r.tomorrow || '', 'Day rating': moodLabel(r.mood) });
+    Object.assign(row, { 'Wins today': r.positives || '', Challenges: r.challenges || '', 'Other work': r.other || '', 'Plan for tomorrow': r.tomorrow || '', 'Day rating': moodLabel(r.mood) });
     return row;
   });
 }
@@ -118,7 +119,8 @@ export async function exportExcel({ records, reports, employees, from, to, title
 }
 
 // ── PDF ─────────────────────────────────────────────────────────
-export async function exportPDF({ records, reports, employees, from, to, title }) {
+// Builds the jsPDF doc only — used by both the local download and the "email to management" send.
+async function buildPDF({ records, reports, employees, from, to, title }) {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
@@ -179,21 +181,34 @@ export async function exportPDF({ records, reports, employees, from, to, title }
     interested.map((c) => [c.date, c.employee, c.name, c.phone, c.remarks]), { columnStyles: { 4: { cellWidth: 320 } } });
 
   const hrGood = [...records.hiring].filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status)).sort(byDateAsc);
-  section('Hiring highlights', ['Date', 'HR', 'Candidate', 'Number', 'Position', 'Status', 'Remarks'],
-    hrGood.map((c) => [c.date, c.employee, c.name, c.phone, c.position, statusInfo('hiring', c.status).label, c.remarks]));
+  section('Hiring highlights', ['Date', 'HR', 'Candidate', 'Number', 'Position', 'Area', 'Status', 'Scheduled for', 'Remarks'],
+    hrGood.map((c) => [c.date, c.employee, c.name, c.phone, c.position, c.area, statusInfo('hiring', c.status).label, c.interviewDate ? fmtDate(c.interviewDate) : '', c.remarks]));
 
   section('Cancelled orders', ['Date', 'Telecaller', 'Customer', 'Product', 'Qty', 'Amount', 'Reason'],
     [...records.cancellations].sort(byDateAsc).map((c) => [c.date, c.employee, c.name, c.product, `${fmtQty(c.qty)} ${c.unit || ''}`, rs(c.amount), c.reason]));
 
-  const updates = [...reports].sort(byDateAsc).filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key]) || r.positives || r.challenges);
-  section('Daily updates', ['Date', 'Employee', 'Work / update', 'Wins', 'Challenges'],
-    updates.map((r) => [r.date, r.name, TEXT_FIELDS.map((f) => r.notes?.[f.key]).filter(Boolean).join('\n'), r.positives, r.challenges]),
-    { columnStyles: { 2: { cellWidth: 260 } } });
+  const updates = [...reports].sort(byDateAsc).filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key]) || r.positives || r.challenges || r.other);
+  section('Daily updates', ['Date', 'Employee', 'Work / update', 'Wins', 'Other work', 'Challenges'],
+    updates.map((r) => [r.date, r.name, TEXT_FIELDS.map((f) => r.notes?.[f.key]).filter(Boolean).join('\n'), r.positives, r.other, r.challenges]),
+    { columnStyles: { 2: { cellWidth: 220 } } });
 
   const pages = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
     doc.text(`Team Pulse  |  Generated ${new Date().toLocaleString('en-IN')}  |  Page ${i} of ${pages}`, 36, H - 18);
   }
-  doc.save(`${slug(title)}_${from}_to_${to}.pdf`);
+  return doc;
+}
+
+export async function exportPDF(opts) {
+  const doc = await buildPDF(opts);
+  doc.save(`${slug(opts.title)}_${opts.from}_to_${opts.to}.pdf`);
+}
+
+/** Same report, returned as a base64 string (no data: prefix) + filename — ready to email as an attachment. */
+export async function reportPDFBase64(opts) {
+  const doc = await buildPDF(opts);
+  const uri = doc.output('datauristring'); // "data:application/pdf;filename=...;base64,XXXX"
+  const base64 = uri.slice(uri.indexOf('base64,') + 7);
+  return { base64, filename: `${slug(opts.title)}_${opts.from}_to_${opts.to}.pdf` };
 }

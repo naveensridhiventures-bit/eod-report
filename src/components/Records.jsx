@@ -17,6 +17,7 @@ function cellValue(type, col, r) {
   if (col === 'status' || col === 'type') return <StatusChip type={type} value={r[col]} />;
   if (col === 'amount') return r.amount ? inr(r.amount) : '';
   if (col === 'qty') return r.qty ? fmtQty(r.qty) : '';
+  if (col === 'interviewDate') return r.interviewDate ? fmtDate(r.interviewDate, { day: 'numeric', month: 'short' }) : '';
   return r[col] || '';
 }
 
@@ -166,6 +167,8 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
                             <select className="cell-input" value={r[c]} onChange={(e) => edit(i, c, e.target.value)}>
                               {def.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                             </select>
+                          ) : c === 'interviewDate' ? (
+                            <input type="date" className="cell-input" value={r.interviewDate ?? ''} onChange={(e) => edit(i, c, e.target.value)} placeholder={r.status === 'scheduled' ? 'When?' : ''} />
                           ) : (
                             <input className={`cell-input ${c}`} value={r[c] ?? ''} onChange={(e) => edit(i, c, e.target.value)} inputMode={['qty', 'amount', 'phone'].includes(c) ? 'decimal' : undefined} />
                           )}

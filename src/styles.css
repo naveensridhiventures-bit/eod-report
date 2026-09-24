@@ -175,6 +175,8 @@ button { cursor: pointer; }
 .chip-bad { background: var(--bad-soft); color: #a8302a; }
 .chip-gold { background: var(--marigold-soft); color: #87540a; }
 .role-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.switch-row { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.switch-row input { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; }
 
 .segmented { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 2px; flex-wrap: wrap; }
 .segmented button { border: 0; background: transparent; padding: 7px 14px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--muted); }

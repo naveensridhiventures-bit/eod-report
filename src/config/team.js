@@ -53,15 +53,24 @@ export const RECORD_TYPES = {
   },
   hiring: {
     label: 'Hiring calls', short: 'HR calls', verb: 'Import HR calls',
-    cols: ['name', 'phone', 'position', 'remarks', 'status'],
+    cols: ['name', 'phone', 'position', 'area', 'remarks', 'status', 'interviewDate'],
     statuses: HIRING_STATUSES,
-    example: 'Suresh\t9876501234\tDriver\tInterview scheduled Monday 11am\nPriya, 9988776655, Telecaller, joined today\nArun 9090909090 driver relieved'
+    example: 'Suresh\t9876501234\tDriver\tTambaram\tInterview scheduled Monday 11am\nPriya, 9988776655, Telecaller, Velachery, joined today\nArun 9090909090 driver relieved'
   }
 };
 
 export const COL_LABELS = {
   name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
-  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position'
+  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area / Location', type: 'Type', reason: 'Reason',
+  position: 'Position', interviewDate: 'Scheduled date'
+};
+
+// A free-text "anything else?" box shown under every role's daily entry, so any
+// role holder can note extra work they did outside their usual reporting fields.
+export const OTHER_WORK_FIELD = {
+  key: 'other', short: 'Other work', label: 'Other / additional work done today',
+  placeholder: 'Anything else you did today that isn’t covered above — a task you helped with, a favour for another team, anything worth mentioning…',
+  rows: 3
 };
 
 export const ROLES = {

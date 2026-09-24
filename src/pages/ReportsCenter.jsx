@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
-import { fetchBundle } from '../lib/api';
-import { exportExcel, exportPDF } from '../lib/reports';
+import { FileSpreadsheet, FileText, Loader2, MailCheck } from 'lucide-react';
+import { fetchBundle, emailReport, fetchSettings, IS_DEMO } from '../lib/api';
+import { exportExcel, exportPDF, reportPDFBase64 } from '../lib/reports';
 import { perPerson, fmtQty } from '../lib/stats';
 import { weekRange, monthRange, addDays, fmtDate } from '../lib/date';
 import { inr, num } from '../lib/format';
@@ -31,7 +31,13 @@ export default function ReportsCenter({ user, employees, notify }) {
   const [who, setWho] = useState(canSeeAll ? 'all' : user.id);
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState('');
+  const [managementEmails, setManagementEmails] = useState([]);
   const { from, to } = periodRange(kind, custom);
+
+  useEffect(() => {
+    if (IS_DEMO) return;
+    fetchSettings().then((s) => setManagementEmails(s.managementEmails)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -61,6 +67,20 @@ export default function ReportsCenter({ user, employees, notify }) {
     { type: 'Excel', desc: 'Summary plus every call, order, customer and update', icon: FileSpreadsheet, color: '#1D7049', fn: exportExcel },
     { type: 'PDF', desc: 'Simple report with interested calls highlighted', icon: FileText, color: '#D6453D', fn: exportPDF }
   ];
+
+  const sendToManagement = async () => {
+    if (!total) { notify('There’s nothing in this period to send.', 'error'); return; }
+    setBusy('Email');
+    try {
+      const { base64, filename } = await reportPDFBase64({ ...data, employees: staff, from, to, title });
+      await emailReport({ pdfBase64: base64, filename, subject: `${title} — ${fmtDate(from)} to ${fmtDate(to)}`, from, to, title });
+      notify(`Sent to ${managementEmails.join(', ') || 'management'}`);
+    } catch (e) {
+      notify(`Couldn’t email the report: ${e.message}`, 'error');
+    } finally {
+      setBusy('');
+    }
+  };
 
   return (
     <div className="page">
@@ -102,6 +122,12 @@ export default function ReportsCenter({ user, employees, notify }) {
             <span><span className="t">Download {d.type}</span><br /><span className="s">{d.desc}</span></span>
           </button>
         ))}
+        {canSeeAll && !IS_DEMO && (
+          <button className="dl-card" onClick={sendToManagement} disabled={!!busy || !data}>
+            <span className="ic" style={{ background: '#3D7DD8' }}>{busy === 'Email' ? <Loader2 size={20} className="spin" /> : <MailCheck size={20} />}</span>
+            <span><span className="t">Email to management</span><br /><span className="s">Sends this period as a PDF to {managementEmails.join(', ') || 'the management inbox'}</span></span>
+          </button>
+        )}
       </div>
 
       <div className="panel">

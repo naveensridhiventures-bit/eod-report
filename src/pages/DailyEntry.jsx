@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sparkles, Save, Loader2, Check, Copy, Send, CheckCircle2, Clock, Upload } from 'lucide-react';
-import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT } from '../config/team';
+import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT, OTHER_WORK_FIELD } from '../config/team';
 import { ROLE_ICONS, Loading, Segmented } from '../components/ui';
 import { BulkImport, RecordTable } from '../components/Records';
 import { fetchReports, saveReport, fetchRecords, deleteRecord } from '../lib/api';
@@ -9,7 +9,7 @@ import { statsFor, recordsOnDate, fmtQty } from '../lib/stats';
 import { toISO, todayISO, fromISO, addDays } from '../lib/date';
 import { inr } from '../lib/format';
 
-const blankForm = () => ({ notes: {}, positives: '', challenges: '', tomorrow: '', mood: 0 });
+const blankForm = () => ({ notes: {}, positives: '', challenges: '', tomorrow: '', mood: 0, other: '' });
 
 function calcStreak(dates) {
   const set = new Set(dates);
@@ -123,7 +123,7 @@ export default function DailyEntry({ user, notify }) {
   useEffect(() => {
     if (!history) return;
     setForm(existing
-      ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0 }
+      ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0, other: existing.other || '' }
       : blankForm());
   }, [existingKey, !!history]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -239,6 +239,10 @@ export default function DailyEntry({ user, notify }) {
               <label className="label" htmlFor="tomorrow">Plan for tomorrow</label>
               <textarea id="tomorrow" className="textarea" placeholder="Top priorities for tomorrow" value={form.tomorrow} onChange={(e) => setForm({ ...form, tomorrow: e.target.value })} />
             </div>
+          </div>
+          <div>
+            <label className="label" htmlFor={OTHER_WORK_FIELD.key}>{OTHER_WORK_FIELD.label}</label>
+            <textarea id={OTHER_WORK_FIELD.key} className="textarea" rows={OTHER_WORK_FIELD.rows} placeholder={OTHER_WORK_FIELD.placeholder} value={form.other} onChange={(e) => setForm({ ...form, other: e.target.value })} />
           </div>
           <div>
             <span className="label">How was your day?</span>

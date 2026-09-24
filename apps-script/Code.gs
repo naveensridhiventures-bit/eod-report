@@ -10,13 +10,15 @@
  * 5. Run  createDailyTrigger()  once to email management every evening.
  *
  * UPDATING FROM AN OLDER VERSION: paste this file, run setup() again (it only
- * adds the missing tabs), then Deploy → Manage deployments → Edit → New version.
+ * adds the missing tabs — any missing columns, like "area" or "interviewDate"
+ * on HR Calls, are added automatically the next time something is saved),
+ * then Deploy → Manage deployments → Edit → New version.
  */
 
 var SHEET_EMPLOYEES = 'Employees';
 var SHEET_REPORTS = 'Reports';
 var SHEET_SETTINGS = 'Settings';
-var BASE_HEADERS = ['id', 'date', 'employeeId', 'name', 'roles', 'submittedAt', 'mood', 'positives', 'challenges', 'tomorrow', 'notes'];
+var BASE_HEADERS = ['id', 'date', 'employeeId', 'name', 'roles', 'submittedAt', 'mood', 'positives', 'challenges', 'other', 'tomorrow', 'notes'];
 
 // Bulk-imported data: one tab per type
 var RECORD_BASE = ['id', 'date', 'employeeId', 'employee', 'createdAt'];
@@ -25,7 +27,7 @@ var RECORD_SHEETS = {
   orders: { sheet: 'Orders', cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount'] },
   customers: { sheet: 'Customers', cols: ['name', 'phone', 'area', 'type'] },
   cancellations: { sheet: 'Cancellations', cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'] },
-  hiring: { sheet: 'HR Calls', cols: ['name', 'phone', 'position', 'remarks', 'status'] }
+  hiring: { sheet: 'HR Calls', cols: ['name', 'phone', 'position', 'area', 'remarks', 'status', 'interviewDate'] }
 };
 var NUMERIC_COLS = ['qty', 'amount'];
 var STATUS_LABELS = {
@@ -78,6 +80,8 @@ function setup() {
       sh.getRange('B:B').setNumberFormat('@');
       var phoneCol = RECORD_BASE.length + def.cols.indexOf('phone') + 1;
       sh.getRange(1, phoneCol, sh.getMaxRows(), 1).setNumberFormat('@');
+      var idateCol = RECORD_BASE.length + def.cols.indexOf('interviewDate') + 1;
+      if (def.cols.indexOf('interviewDate') !== -1) sh.getRange(1, idateCol, sh.getMaxRows(), 1).setNumberFormat('@');
       styleHeader(sh);
     }
   });
@@ -85,9 +89,9 @@ function setup() {
   var set = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
   if (set.getLastRow() === 0) {
     set.appendRow(['key', 'value', 'what it does']);
-    set.appendRow(['MANAGEMENT_EMAILS', Session.getActiveUser().getEmail(), 'Comma-separated emails that receive EOD reports']);
+    set.appendRow(['MANAGEMENT_EMAILS', 'hiring.sridhiventures@gmail.com', 'Comma-separated emails that receive EOD reports']);
     set.appendRow(['NOTIFY_ON_SUBMIT', 'yes', 'yes = email management every time someone submits']);
-    set.appendRow(['COMPANY_NAME', 'Our Company', 'Shown in the email subject']);
+    set.appendRow(['COMPANY_NAME', 'Sridhi Ventures', 'Shown in the email subject and header']);
     styleHeader(set);
   }
 
@@ -116,6 +120,7 @@ function doGet(e) {
     if (p.action === 'employees') return raw(cached('employees', {}, function () { return getEmployees(false); }));
     if (p.action === 'reports') return raw(cached('reports', p, function () { return getReports(p.from, p.to, p.employeeId); }));
     if (p.action === 'records') return raw(cached('records', p, function () { return recordsFor(p); }));
+    if (p.action === 'settings') return json(ok(getSettingsObject()));
     // One round trip for reports + records together (used by dashboards and reports)
     if (p.action === 'bundle') {
       return raw(cached('bundle', p, function () {
@@ -144,6 +149,8 @@ function doPost(e) {
     if (body.action === 'saveRecords') return json(ok(saveRecords(body.type, body.records || [])));
     if (body.action === 'deleteRecord') return json(ok(deleteRecord(body.type, body.id)));
     if (body.action === 'sendEOD') { sendDailySummary(body.date); return json(ok(true)); }
+    if (body.action === 'saveSettings') return json(ok(saveSettingsObject(body.settings || {})));
+    if (body.action === 'emailReport') return json(ok(emailGeneratedReport(body)));
     return json(fail('Unknown action'));
   } catch (err) {
     return json(fail(err.message));
@@ -236,9 +243,9 @@ function saveReport(report) {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_REPORTS);
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
-    // Add a column for any new metric
-    var metricKeys = Object.keys(report.metrics || {});
-    metricKeys.forEach(function (k) {
+    // Add a column for any new metric, or a base column (like "other") missing from an older sheet
+    var wanted = metricKeysOf(report).concat(BASE_HEADERS);
+    wanted.forEach(function (k) {
       if (headers.indexOf(k) === -1) {
         headers.push(k);
         sheet.getRange(1, headers.length).setValue(k).setFontWeight('bold').setBackground('#0E3B3A').setFontColor('#ffffff');
@@ -257,6 +264,7 @@ function saveReport(report) {
         case 'mood': return report.mood || '';
         case 'positives': return report.positives || '';
         case 'challenges': return report.challenges || '';
+        case 'other': return report.other || '';
         case 'tomorrow': return report.tomorrow || '';
         case 'notes': return JSON.stringify(report.notes || {});
         default: return report.metrics && report.metrics[h] !== undefined ? Number(report.metrics[h]) || 0 : '';
@@ -282,6 +290,8 @@ function saveReport(report) {
   if (String(getSetting('NOTIFY_ON_SUBMIT')).toLowerCase() === 'yes') queueReportEmail(report);
   return report;
 }
+
+function metricKeysOf(report) { return Object.keys(report.metrics || {}); }
 
 function queueReportEmail(report) {
   try {
@@ -320,7 +330,7 @@ function getReports(from, to, employeeId) {
       id: r.id, date: date, employeeId: String(r.employeeId), name: r.name,
       roles: String(r.roles || '').split(',').filter(String),
       submittedAt: r.submittedAt instanceof Date ? r.submittedAt.toISOString() : r.submittedAt,
-      mood: Number(r.mood) || 0, positives: r.positives, challenges: r.challenges, tomorrow: r.tomorrow,
+      mood: Number(r.mood) || 0, positives: r.positives, challenges: r.challenges, other: r.other || '', tomorrow: r.tomorrow,
       notes: notes, metrics: metrics
     };
   }).filter(function (r) {
@@ -337,11 +347,28 @@ function recordSheet(type) {
   return sh;
 }
 
+// Reads the sheet's actual header row, adding any column from `wanted` that an older
+// sheet doesn't have yet (e.g. "area" / "interviewDate" added to HR Calls later).
+function ensureHeaders(sh, wanted) {
+  var last = sh.getLastRow();
+  var headers = last > 0 ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0] : [];
+  if (!headers.length) { headers = wanted.slice(); sh.getRange(1, 1, 1, headers.length).setValues([headers]); styleHeader(sh); return headers; }
+  var added = false;
+  wanted.forEach(function (h) {
+    if (headers.indexOf(h) === -1) { headers.push(h); added = true; }
+  });
+  if (added) {
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    styleHeader(sh);
+  }
+  return headers;
+}
+
 function saveRecords(type, records) {
   if (!records.length) return [];
   var def = RECORD_SHEETS[type];
   var sh = recordSheet(type);
-  var headers = RECORD_BASE.concat(def.cols);
+  var headers = ensureHeaders(sh, RECORD_BASE.concat(def.cols));
   var rows = records.map(function (r) {
     return headers.map(function (h) {
       var v = r[h];
@@ -355,17 +382,18 @@ function saveRecords(type, records) {
     if (type === 'customers') {
       // One row per customer per telecaller: update if the number is already there (one read, one write)
       var last = sh.getLastRow();
-      var phIdx = RECORD_BASE.length + def.cols.indexOf('phone');
+      var phIdx = headers.indexOf('phone');
+      var idIdx = headers.indexOf('id'), dateIdx = headers.indexOf('date'), empIdx = headers.indexOf('employeeId'), createdIdx = headers.indexOf('createdAt');
       var data = last > 1 ? sh.getRange(2, 1, last - 1, headers.length).getDisplayValues() : [];
       var existing = {};
-      for (var i = 0; i < data.length; i++) if (data[i][phIdx]) existing[data[i][2] + '|' + data[i][phIdx]] = i;
+      for (var i = 0; i < data.length; i++) if (data[i][phIdx]) existing[data[i][empIdx] + '|' + data[i][phIdx]] = i;
       var fresh = [];
       var touched = false;
       rows.forEach(function (row, idx) {
         var key = records[idx].employeeId + '|' + (records[idx].phone || '');
         if (records[idx].phone && existing[key] !== undefined) {
           var old = data[existing[key]];
-          row[0] = old[0]; row[1] = old[1]; row[4] = old[4]; // keep first-added date
+          row[idIdx] = old[idIdx]; row[dateIdx] = old[dateIdx]; row[createdIdx] = old[createdIdx]; // keep first-added date
           data[existing[key]] = row;
           touched = true;
         } else fresh.push(row);
@@ -376,7 +404,10 @@ function saveRecords(type, records) {
     if (rows.length) {
       var start = sh.getLastRow() + 1;
       sh.getRange(start, 2, rows.length, 1).setNumberFormat('@');
-      sh.getRange(start, RECORD_BASE.length + def.cols.indexOf('phone') + 1, rows.length, 1).setNumberFormat('@');
+      var phoneCol = headers.indexOf('phone') + 1;
+      if (phoneCol) sh.getRange(start, phoneCol, rows.length, 1).setNumberFormat('@');
+      var idateCol = headers.indexOf('interviewDate') + 1;
+      if (idateCol) sh.getRange(start, idateCol, rows.length, 1).setNumberFormat('@');
       sh.getRange(start, 1, rows.length, headers.length).setValues(rows);
     }
   } finally {
@@ -391,9 +422,10 @@ function getRecords(type, from, to, employeeId) {
   var sh = recordSheet(type);
   var last = sh.getLastRow();
   if (last < 2) return [];
-  var headers = RECORD_BASE.concat(def.cols);
+  var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  var dateIdx = headers.indexOf('date');
   // Read only the date column first, then just the rows in range (keeps big sheets fast)
-  var dates = sh.getRange(2, 2, last - 1, 1).getDisplayValues();
+  var dates = sh.getRange(2, dateIdx + 1, last - 1, 1).getDisplayValues();
   var first = -1, lastIdx = -1;
   for (var i = 0; i < dates.length; i++) {
     var d = dates[i][0];
@@ -444,6 +476,38 @@ function getSetting(key) {
   return '';
 }
 
+function getSettingsObject() {
+  var out = {};
+  readSheet(SHEET_SETTINGS).forEach(function (r) { if (r.key) out[r.key] = r.value; });
+  return out;
+}
+
+// Upserts { KEY: value, ... } into the Settings sheet, adding any key that isn't there yet.
+function saveSettingsObject(settings) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
+  if (!sh) throw new Error('The "Settings" tab is missing. Run setup() once in Apps Script.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var last = sh.getLastRow();
+    var keys = last > 1 ? sh.getRange(2, 1, last - 1, 1).getValues().map(function (r) { return r[0]; }) : [];
+    Object.keys(settings || {}).forEach(function (k) {
+      var v = settings[k];
+      var idx = keys.indexOf(k);
+      if (idx === -1) {
+        sh.appendRow([k, v, '']);
+        keys.push(k);
+      } else {
+        sh.getRange(idx + 2, 2).setValue(v);
+      }
+    });
+  } finally {
+    lock.releaseLock();
+  }
+  bumpCache();
+  return getSettingsObject();
+}
+
 function managementEmails() {
   return String(getSetting('MANAGEMENT_EMAILS') || '').split(',').map(function (s) { return s.trim(); }).filter(String);
 }
@@ -453,24 +517,38 @@ function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&
 
 // ── Emails ────────────────────────────────────────────────────
 var TEXT_LABELS = { work_done: 'Work done', blockers: 'Blockers', head_update: 'Team & sales update' };
-var TD = 'padding:6px 10px;border-bottom:1px solid #e6ece9;font-size:13px;vertical-align:top';
+var TD = 'padding:8px 12px;border-bottom:1px solid #e6ece9;font-size:13px;vertical-align:top';
+var BRAND_GREEN = '#0E3B3A';
+var BRAND_GOLD = '#F4A93B';
+
+var STATUS_COLORS = {
+  interested: '#1d7049', joined: '#1d7049', driver_arranged: '#1d7049', scheduled: '#2a5ea8',
+  callback: '#87540a', called: '#5e706e', relieved: '#a8302a', not_interested: '#a8302a', no_answer: '#5e706e'
+};
+function statusBadge(status) {
+  var color = STATUS_COLORS[status] || '#5e706e';
+  return '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;' +
+    'background:' + color + '1A;color:' + color + '">' + (STATUS_LABELS[status] || status) + '</span>';
+}
 
 function interestedTable(calls) {
   if (!calls.length) return '';
-  return '<h3 style="color:#1d7049;margin:18px 0 6px">Interested & positive calls (' + calls.length + ')</h3>' +
-    '<table style="width:100%;border-collapse:collapse">' +
+  return '<h3 style="color:#1d7049;margin:22px 0 8px;font-size:15px">🟢 Interested &amp; positive calls (' + calls.length + ')</h3>' +
+    '<table style="width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden">' +
     '<tr style="background:#f1faf4"><th style="' + TD + ';text-align:left">Customer</th><th style="' + TD + ';text-align:left">Number</th><th style="' + TD + ';text-align:left">Remarks</th><th style="' + TD + ';text-align:left">By</th></tr>' +
-    calls.map(function (c) {
-      return '<tr><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.remarks) + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
+    calls.map(function (c, i) {
+      return '<tr style="background:' + (i % 2 ? '#fbfdfc' : '#ffffff') + '"><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.remarks) + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
     }).join('') + '</table>';
 }
 
 function hiringTable(list) {
   var good = list.filter(function (c) { return ['scheduled', 'joined', 'driver_arranged', 'relieved'].indexOf(c.status) !== -1; });
   if (!good.length) return '';
-  return '<h3 style="color:#2a5ea8;margin:18px 0 6px">Hiring updates</h3><table style="width:100%;border-collapse:collapse">' +
-    good.map(function (c) {
-      return '<tr><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.position) + '</td><td style="' + TD + '">' + (STATUS_LABELS[c.status] || c.status) + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
+  return '<h3 style="color:#2a5ea8;margin:22px 0 8px;font-size:15px">🧑‍💼 Hiring updates</h3>' +
+    '<table style="width:100%;border-collapse:collapse">' +
+    '<tr style="background:#eef4fb"><th style="' + TD + ';text-align:left">Candidate</th><th style="' + TD + ';text-align:left">Number</th><th style="' + TD + ';text-align:left">Position</th><th style="' + TD + ';text-align:left">Area</th><th style="' + TD + ';text-align:left">Status</th><th style="' + TD + ';text-align:left">Scheduled for</th><th style="' + TD + ';text-align:left">By</th></tr>' +
+    good.map(function (c, i) {
+      return '<tr style="background:' + (i % 2 ? '#fbfdfc' : '#ffffff') + '"><td style="' + TD + ';font-weight:700">' + esc(c.name) + '</td><td style="' + TD + '">' + esc(c.phone) + '</td><td style="' + TD + '">' + esc(c.position) + '</td><td style="' + TD + '">' + esc(c.area) + '</td><td style="' + TD + '">' + statusBadge(c.status) + '</td><td style="' + TD + '">' + (c.interviewDate ? esc(c.interviewDate) : '—') + '</td><td style="' + TD + '">' + esc(c.employee) + '</td></tr>';
     }).join('') + '</table>';
 }
 
@@ -478,22 +556,40 @@ function notesHtml(r) {
   var notes = r.notes || {};
   if (typeof notes === 'string') { try { notes = JSON.parse(notes); } catch (e) { notes = {}; } }
   var html = '';
-  Object.keys(TEXT_LABELS).forEach(function (k) { if (notes[k]) html += '<p style="margin:6px 0"><b>' + TEXT_LABELS[k] + ':</b> ' + esc(notes[k]) + '</p>'; });
-  if (r.positives) html += '<p style="margin:6px 0"><b>Wins:</b> ' + esc(r.positives) + '</p>';
-  if (r.challenges) html += '<p style="margin:6px 0"><b>Challenges:</b> ' + esc(r.challenges) + '</p>';
-  if (r.tomorrow) html += '<p style="margin:6px 0"><b>Plan for tomorrow:</b> ' + esc(r.tomorrow) + '</p>';
+  Object.keys(TEXT_LABELS).forEach(function (k) { if (notes[k]) html += '<p style="margin:8px 0"><b>' + TEXT_LABELS[k] + ':</b> ' + esc(notes[k]) + '</p>'; });
+  if (r.positives) html += '<p style="margin:8px 0"><b>✅ Wins:</b> ' + esc(r.positives) + '</p>';
+  if (r.challenges) html += '<p style="margin:8px 0"><b>⚠️ Challenges:</b> ' + esc(r.challenges) + '</p>';
+  if (r.other) html += '<p style="margin:8px 0"><b>➕ Other work done:</b> ' + esc(r.other) + '</p>';
+  if (r.tomorrow) html += '<p style="margin:8px 0"><b>📌 Plan for tomorrow:</b> ' + esc(r.tomorrow) + '</p>';
   return html;
 }
 
 function numbersLine(m) {
-  return Object.keys(m || {}).filter(function (k) { return Number(m[k]) && LABELS[k]; })
-    .map(function (k) { return LABELS[k] + ': <b>' + fmtVal(k, m[k]) + '</b>'; }).join(' &nbsp;|&nbsp; ');
+  var chips = Object.keys(m || {}).filter(function (k) { return Number(m[k]) && LABELS[k]; })
+    .map(function (k) {
+      return '<span style="display:inline-block;margin:3px 6px 3px 0;padding:5px 11px;border-radius:8px;background:#f4f8f6;font-size:12.5px">' +
+        LABELS[k] + ': <b style="color:' + BRAND_GREEN + '">' + fmtVal(k, m[k]) + '</b></span>';
+    });
+  return chips.join('');
 }
 
-function frame(title, sub, body) {
-  return '<div style="font-family:Arial,sans-serif;max-width:760px">' +
-    '<div style="background:#0E3B3A;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0"><div style="font-size:20px;font-weight:700">' + title + '</div><div style="color:#F4A93B">' + sub + '</div></div>' +
-    '<div style="border:1px solid #d9e2de;border-top:0;padding:16px 22px;border-radius:0 0 12px 12px">' + body + '</div></div>';
+// A polished, branded wrapper used by every outgoing email.
+function frame(title, sub, body, opts) {
+  opts = opts || {};
+  var company = opts.company || getSetting('COMPANY_NAME') || 'Team Pulse';
+  return '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:780px;margin:0 auto;background:#f4f6f5;padding:18px">' +
+    '<div style="background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(14,59,58,0.08)">' +
+      '<div style="background:linear-gradient(135deg,' + BRAND_GREEN + ' 0%,#155e5b 100%);color:#fff;padding:26px 28px">' +
+        '<div style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:' + BRAND_GOLD + ';font-weight:700;margin-bottom:6px">' + esc(company) + '</div>' +
+        '<div style="font-size:22px;font-weight:700;line-height:1.3">' + title + '</div>' +
+        '<div style="color:#cfe6e2;font-size:13.5px;margin-top:4px">' + sub + '</div>' +
+      '</div>' +
+      '<div style="padding:22px 28px 26px">' + body + '</div>' +
+      '<div style="padding:14px 28px;background:#f7faf9;border-top:1px solid #e6ece9;font-size:11.5px;color:#8a9a97">' +
+        'Sent automatically by Team Pulse — the daily EOD reporting app. Please don’t reply to this address.' +
+      '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 function emailSingleReport(r) {
@@ -504,9 +600,9 @@ function emailSingleReport(r) {
     calls = getRecords('calls', r.date, r.date, r.employeeId).filter(function (c) { return c.status === 'interested'; });
     hiring = getRecords('hiring', r.date, r.date, r.employeeId);
   } catch (e) { /* tabs not set up yet */ }
-  var body = '<p style="font-size:14px">' + (numbersLine(r.metrics) || 'No call lists imported.') + '</p>' +
+  var body = (numbersLine(r.metrics) ? '<div style="margin-bottom:6px">' + numbersLine(r.metrics) + '</div>' : '<p style="font-size:13.5px;color:#8a9a97">No call lists imported.</p>') +
     notesHtml(r) + interestedTable(calls) + hiringTable(hiring);
-  MailApp.sendEmail({ to: to.join(','), subject: 'EOD: ' + r.name + ' — ' + r.date, htmlBody: frame('EOD — ' + esc(r.name), r.date, body) });
+  MailApp.sendEmail({ to: to.join(','), subject: '📋 EOD: ' + r.name + ' — ' + r.date, htmlBody: frame('End-of-day report', esc(r.name) + '  •  ' + fmtLongDate(r.date), body) });
 }
 
 function sendDailySummary(dateStr) {
@@ -526,29 +622,55 @@ function sendDailySummary(dateStr) {
   reports.forEach(function (r) { Object.keys(r.metrics).forEach(function (k) { totals[k] = (totals[k] || 0) + (Number(r.metrics[k]) || 0); }); });
   var headline = ['calls_made', 'interested_calls', 'orders', 'sales_value', 'sales_kg', 'sales_l', 'orders_cancelled', 'hr_calls', 'scheduled', 'joined'];
   var kpiCells = headline.map(function (k) {
-    return '<td style="padding:8px;text-align:center;border:1px solid #d9e2de"><div style="font-size:10px;color:#5e706e">' + LABELS[k] + '</div><div style="font-size:17px;font-weight:700;color:#0E3B3A">' + fmtVal(k, totals[k]) + '</div></td>';
+    return '<td style="padding:10px 6px;text-align:center;border:1px solid #e6ece9;border-radius:6px"><div style="font-size:10px;color:#5e706e;text-transform:uppercase;letter-spacing:0.4px">' + LABELS[k] + '</div><div style="font-size:18px;font-weight:700;color:' + BRAND_GREEN + '">' + fmtVal(k, totals[k]) + '</div></td>';
   }).join('');
 
   var people = staff.map(function (e) {
     var r = done[e.id];
-    if (!r) return '<div style="padding:10px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#D6453D">— not submitted</span></div>';
-    return '<div style="padding:10px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#2E9E6A">— submitted</span>' +
-      '<div style="font-size:13px;margin-top:4px">' + numbersLine(r.metrics) + '</div><div style="font-size:13px">' + notesHtml(r) + '</div></div>';
+    if (!r) return '<div style="padding:12px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#D6453D;font-size:12.5px">● not submitted</span></div>';
+    return '<div style="padding:12px 0;border-bottom:1px solid #e6ece9"><b>' + esc(e.name) + '</b> <span style="color:#2E9E6A;font-size:12.5px">● submitted</span>' +
+      '<div style="margin-top:6px">' + numbersLine(r.metrics) + '</div><div style="font-size:13px">' + notesHtml(r) + '</div></div>';
   }).join('');
 
   var interested = calls.filter(function (c) { return c.status === 'interested'; });
-  var body = '<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><tr>' + kpiCells + '</tr></table>' +
-    interestedTable(interested) + hiringTable(hiring) + '<h3 style="margin:18px 0 6px">Team</h3>' + people;
+  var body = '<table style="width:100%;border-collapse:separate;border-spacing:6px;margin-bottom:6px"><tr>' + kpiCells + '</tr></table>' +
+    interestedTable(interested) + hiringTable(hiring) + '<h3 style="margin:22px 0 8px;font-size:15px">👥 Team</h3>' + people;
 
   MailApp.sendEmail({
     to: to.join(','),
-    subject: (getSetting('COMPANY_NAME') || 'Team') + ' — EOD summary ' + date,
-    htmlBody: frame('Team EOD summary', date + ' — ' + reports.length + ' of ' + staff.length + ' submitted', body)
+    subject: '📊 ' + (getSetting('COMPANY_NAME') || 'Team') + ' — EOD summary ' + date,
+    htmlBody: frame('Daily team summary', fmtLongDate(date) + '  •  ' + reports.length + ' of ' + staff.length + ' submitted', body)
   });
+}
+
+// Emails a client-generated report (Excel/PDF period download) to management as an attachment.
+function emailGeneratedReport(body) {
+  var to = (body.recipients && body.recipients.length) ? body.recipients : managementEmails();
+  if (!to.length) throw new Error('Add at least one management email in Settings first');
+  if (!body.pdfBase64) throw new Error('No PDF data received');
+  var blob = Utilities.newBlob(Utilities.base64Decode(body.pdfBase64), 'application/pdf', body.filename || 'report.pdf');
+  var summaryBody = '<p style="font-size:14px">The <b>' + esc(body.title || 'performance') + '</b> report for <b>' +
+    esc(fmtLongDate(body.from)) + '</b> to <b>' + esc(fmtLongDate(body.to)) + '</b> is attached as a PDF.</p>' +
+    '<p style="font-size:13px;color:#5e706e">Generated from Team Pulse’s “Download reports” screen.</p>';
+  MailApp.sendEmail({
+    to: to.join(','),
+    subject: '📎 ' + (body.subject || ((getSetting('COMPANY_NAME') || 'Team') + ' — performance report')),
+    htmlBody: frame('Performance report', esc(body.title || '') + '  •  ' + fmtLongDate(body.from) + ' to ' + fmtLongDate(body.to), summaryBody),
+    attachments: [blob]
+  });
+  return { sentTo: to };
 }
 
 function fmtVal(k, v) {
   if (/value|revenue/.test(k)) return inr(v);
   var n = Number(v) || 0;
   return Math.round(n * 100) / 100;
+}
+
+function fmtLongDate(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso + 'T00:00:00');
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'EEE, d MMM yyyy');
+  } catch (e) { return iso; }
 }

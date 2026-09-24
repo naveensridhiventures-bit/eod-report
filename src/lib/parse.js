@@ -3,11 +3,56 @@
 //  into clean records. Works with or without a header row.
 // ─────────────────────────────────────────────────────────────
 import { RECORD_TYPES } from '../config/team';
+import { toISO, addDays } from './date';
 
 const PHONE_RE = /(?:\+?91[\s-]?)?(?:0)?[6-9]\d{2}[\s-]?\d{2}[\s-]?\d{5}\b|(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b|\b\d{10}\b/;
 const QTY_RE = /(\d+(?:\.\d+)?)\s*(kgs?|kilo(?:gram)?s?|kilograms?|gms?|grams?|g|ltrs?|litres?|liters?|lit|lts?|l|ml|pcs|nos|bags?|box(?:es)?|tins?|packets?|pkts?|cans?|bottles?)\b/i;
 const MONEY_RE = /(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:rs\b|rupees|\/-)/i;
 const SEP_RE = /\s*(?:\t|\||;|,(?!\d{3})|\s-\s)\s*/;
+
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// Picks a plain "when" out of free text like "interview scheduled Monday 11am" or
+// "walk-in on 15/10" so a scheduled interview date is captured, not just the remark text.
+export function parseDateHint(text, base = new Date()) {
+  const t = String(text || '').toLowerCase();
+  if (!t.trim()) return '';
+  if (/\btoday\b/.test(t)) return toISO(base);
+  if (/\btomorrow\b|\btmrw\b/.test(t)) return toISO(addDays(base, 1));
+
+  const wd = WEEKDAYS.findIndex((w) => new RegExp(`\\b${w}\\b`).test(t));
+  if (wd !== -1) {
+    let diff = (wd - base.getDay() + 7) % 7;
+    if (diff === 0) diff = /\bnext\b/.test(t) ? 7 : diff; // bare weekday = the coming one (today counts)
+    return toISO(addDays(base, diff));
+  }
+
+  const dm = t.match(/\b([0-3]?\d)[\/\-]([01]?\d)(?:[\/\-](\d{2,4}))?\b/);
+  if (dm) {
+    const day = Number(dm[1]);
+    const mon = Number(dm[2]) - 1;
+    let year = dm[3] ? Number(dm[3]) : base.getFullYear();
+    if (year < 100) year += 2000;
+    if (day >= 1 && day <= 31 && mon >= 0 && mon <= 11) {
+      const d = new Date(year, mon, day);
+      if (!dm[3] && d < new Date(base.getFullYear(), base.getMonth(), base.getDate())) d.setFullYear(year + 1);
+      return toISO(d);
+    }
+  }
+
+  const dmon = t.match(/\b([0-3]?\d)(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/);
+  if (dmon) {
+    const day = Number(dmon[1]);
+    const mon = MONTHS.indexOf(dmon[2]);
+    let year = base.getFullYear();
+    const d = new Date(year, mon, day);
+    if (d < new Date(base.getFullYear(), base.getMonth(), base.getDate())) d.setFullYear(year + 1);
+    return toISO(d);
+  }
+
+  return '';
+}
 
 const HEADER_ALIASES = {
   name: ['name', 'customer', 'customer name', 'candidate', 'candidate name', 'shop', 'party', 'client'],
@@ -21,7 +66,8 @@ const HEADER_ALIASES = {
   area: ['area', 'location', 'city', 'place', 'address'],
   type: ['type', 'customer type', 'category'],
   reason: ['reason', 'cancel reason', 'cancellation reason', 'why'],
-  position: ['position', 'role', 'job', 'post', 'designation']
+  position: ['position', 'role', 'job', 'post', 'designation'],
+  interviewDate: ['interview date', 'scheduled date', 'interview on', 'date', 'schedule date']
 };
 
 export function normalisePhone(s) {
@@ -115,8 +161,12 @@ function fromMapped(type, cells, map) {
   const remarks = get('remarks');
   if (type === 'calls' || type === 'hiring') {
     r.remarks = remarks;
-    if (type === 'hiring') r.position = get('position');
+    if (type === 'hiring') {
+      r.position = get('position');
+      r.area = get('area');
+    }
     r.status = mapStatus(type, get('status'), `${remarks} ${r.position || ''}`);
+    if (type === 'hiring') r.interviewDate = get('interviewDate') || (r.status === 'scheduled' ? parseDateHint(`${remarks} ${get('status')}`) : '');
   }
   if (type === 'orders' || type === 'cancellations') {
     r.product = get('product');
@@ -164,8 +214,14 @@ function fromLine(type, line) {
     } else {
       r.position = '';
     }
+    // A short leading segment that isn't the remark itself (e.g. "Tambaram") is treated as the area/location
+    r.area = '';
+    if (segs.length > 1 && segs[0].split(/\s+/).length <= 3 && classifyHiring(segs[0]) === 'called' && !/\d/.test(segs[0])) {
+      r.area = segs.shift();
+    }
     r.remarks = segs.join(', ');
     r.status = classifyHiring(`${r.remarks} ${r.position}`);
+    r.interviewDate = r.status === 'scheduled' ? parseDateHint(`${r.remarks} ${r.position}`) : '';
   } else if (type === 'orders' || type === 'cancellations') {
     let s = rest;
     const q = s.match(QTY_RE);

@@ -289,6 +289,39 @@ export async function emailEODNow(date) {
   return post({ action: 'sendEOD', date });
 }
 
+const DEFAULT_MANAGEMENT_EMAIL = 'hiring.sridhiventures@gmail.com';
+
+/** { managementEmails: string[], companyName, notifyOnSubmit } */
+export async function fetchSettings() {
+  if (IS_DEMO) return { managementEmails: [DEFAULT_MANAGEMENT_EMAIL], companyName: 'Sridhi Ventures', notifyOnSubmit: true };
+  const s = await get({ action: 'settings' });
+  return {
+    managementEmails: String(s.MANAGEMENT_EMAILS || DEFAULT_MANAGEMENT_EMAIL).split(',').map((x) => x.trim()).filter(Boolean),
+    companyName: s.COMPANY_NAME || 'Our Company',
+    notifyOnSubmit: String(s.NOTIFY_ON_SUBMIT || 'yes').toLowerCase() === 'yes'
+  };
+}
+
+export async function saveSettings({ managementEmails, companyName, notifyOnSubmit }) {
+  if (IS_DEMO) throw new Error('Connect Google Sheets to manage where reports are sent.');
+  const saved = await post({
+    action: 'saveSettings',
+    settings: {
+      MANAGEMENT_EMAILS: (managementEmails || []).join(','),
+      COMPANY_NAME: companyName || '',
+      NOTIFY_ON_SUBMIT: notifyOnSubmit ? 'yes' : 'no'
+    }
+  });
+  clearCache();
+  return saved;
+}
+
+/** Emails a generated PDF report straight to management (or a chosen list) as an attachment. */
+export async function emailReport({ pdfBase64, filename, subject, from, to, title, recipients }) {
+  if (IS_DEMO) throw new Error('Connect Google Sheets to email reports. You can still download the PDF.');
+  return post({ action: 'emailReport', pdfBase64, filename, subject, from, to, title, recipients: recipients || [] });
+}
+
 function normaliseEmployee(e) {
   const roles = Array.isArray(e.roles)
     ? e.roles
