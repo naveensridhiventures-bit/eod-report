@@ -36,10 +36,10 @@ TAB_CONFIG = {
     "dailyOrders": {"tab": "DailyOrders", "headers": ["id","date","customer","area","contact","address","mapLink","deliveryTime","orderType","product","items","kgs","amount","telecaller","status","cancelReason","cancelRemarks","sampleType","amountMode","manualAmount","createdAt"]},
     "existingCustomers": {"tab": "ExistingCustomers", "headers": ["id","name","contact","area","address","reason","status","remarks","lastRemarkAt","createdAt","telecaller"]},
     "telecallerActivity": {"tab": "TelecallerActivity", "headers": ["id","date","telecaller","type","customer","area","kg","amount","qty","unit","notes","createdAt"]},
-    "milkDistributors": {"tab": "MilkDistributors", "headers": ["id","name","contact","area","address","mapLink","status","telecaller","currentBrand","telecallerRemarks","fieldSalesRemarks","createdAt","lastTelecallerRemarkAt","lastFieldSalesRemarkAt"]},
-    "homeCustomers": {"tab": "HomeCustomers", "headers": ["id","name","contact","area","address","mapLink","leadType","source","status","telecaller","distributor","remarks","lastRemarkAt","createdAt"]},
-    "hubDistributors": {"tab": "HubDistributors", "headers": ["id","hub","name","contact","areas","address","mapLink","details","status","telecaller","remarks","createdAt","lastRemarkAt","scheduledVisitAt","scheduledVisitNote"]},
-    "hiring": {"tab": "Hiring", "headers": ["id","name","contact","role","area","experience","expectedSalary","source","stage","assignedTo","scheduledAt","scheduledNote","remarks","lastRemarkAt","createdAt","joinedAt","rejectedReason"]},
+    "milkDistributors": {"tab": "MilkDistributors", "headers": ["id","name","contact","area","address","mapLink","status","telecaller","currentBrand","telecallerRemarks","fieldSalesRemarks","createdAt","lastTelecallerRemarkAt","lastFieldSalesRemarkAt","batchTitle"]},
+    "homeCustomers": {"tab": "HomeCustomers", "headers": ["id","name","contact","area","address","mapLink","leadType","source","status","telecaller","distributor","remarks","lastRemarkAt","createdAt","batchTitle"]},
+    "hubDistributors": {"tab": "HubDistributors", "headers": ["id","hub","name","contact","areas","address","mapLink","details","status","telecaller","remarks","createdAt","lastRemarkAt","scheduledVisitAt","scheduledVisitNote","batchTitle"]},
+    "hiring": {"tab": "Hiring", "headers": ["id","name","contact","role","area","experience","expectedSalary","source","stage","assignedTo","scheduledAt","scheduledNote","remarks","lastRemarkAt","createdAt","joinedAt","rejectedReason","batchTitle"]},
 }
 
 _cache = {}
