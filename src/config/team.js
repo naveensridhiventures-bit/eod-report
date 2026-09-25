@@ -30,47 +30,48 @@ export const CUSTOMER_TYPES = [
 // What each bulk import stores. `cols` = columns shown and saved.
 export const RECORD_TYPES = {
   calls: {
-    label: 'Customer calls', short: 'Calls', verb: 'Import calls',
-    cols: ['name', 'phone', 'remarks', 'status'],
+    label: 'Customer calls', short: 'Calls', noun: 'calls', verb: 'Import calls',
+    cols: ['title', 'name', 'phone', 'remarks', 'status'],
     statuses: CALL_STATUSES,
+    titleHint: 'What is this call list for?',
+    titles: ['Sales', 'Distributor hiring', 'Retail follow-up', 'New leads'],
     example: 'Ramesh Traders\t9876543210\tInterested, send price list\nKumar Stores, 9123456780, call back tomorrow\nLakshmi 98765 12345 not interested'
   },
   orders: {
-    label: 'Sales / orders', short: 'Orders', verb: 'Import orders',
-    cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount'],
+    label: 'Sales / orders', short: 'Orders', noun: 'orders', verb: 'Import orders',
+    cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount'],
+    titleHint: 'What kind of orders are these?',
+    titles: ['Retail', 'Distributor', 'Wholesale'],
     example: 'Ramesh Traders\t9876543210\tGroundnut oil\t15 L\t3450\nKumar Stores, 9123456780, Rice, 50kg, Rs 2800'
   },
   customers: {
-    label: 'My customers', short: 'Customers', verb: 'Import customers',
-    cols: ['name', 'phone', 'area', 'type'],
+    label: 'My customers', short: 'Customers', noun: 'customers', verb: 'Import customers',
+    cols: ['title', 'name', 'phone', 'area', 'type'],
     statuses: CUSTOMER_TYPES,
+    titleHint: 'What kind of customers are these?',
+    titles: ['Retail', 'Distributor', 'Wholesale'],
     example: 'Ramesh Traders\t9876543210\tTambaram\texisting\nKumar Stores, 9123456780, Velachery, new'
   },
   cancellations: {
-    label: 'Cancelled orders', short: 'Cancelled', verb: 'Import cancellations',
-    cols: ['name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'],
+    label: 'Cancelled orders', short: 'Cancelled', noun: 'cancelled orders', verb: 'Import cancellations',
+    cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'],
+    titleHint: 'What kind of orders were cancelled?',
+    titles: ['Retail', 'Distributor', 'Wholesale'],
     example: 'Kumar Stores\t9123456780\tRice\t25 kg\t1400\tPrice too high'
   },
   hiring: {
-    label: 'Hiring calls', short: 'HR calls', verb: 'Import HR calls',
-    cols: ['name', 'phone', 'position', 'area', 'remarks', 'status', 'interviewDate'],
+    label: 'Hiring calls', short: 'HR calls', noun: 'HR calls', verb: 'Import HR calls',
+    cols: ['title', 'name', 'phone', 'remarks', 'status'],
     statuses: HIRING_STATUSES,
-    example: 'Suresh\t9876501234\tDriver\tTambaram\tInterview scheduled Monday 11am\nPriya, 9988776655, Telecaller, Velachery, joined today\nArun 9090909090 driver relieved'
+    titleHint: 'Which position are you hiring for?',
+    titles: ['Driver', 'Call driver', 'Telecaller', 'Delivery boy', 'Distributor'],
+    example: 'Suresh\t9876501234\tInterview scheduled Monday 11am\nPriya, 9988776655, joined today\nArun 9090909090 relieved'
   }
 };
 
 export const COL_LABELS = {
-  name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
-  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area / Location', type: 'Type', reason: 'Reason',
-  position: 'Position', interviewDate: 'Scheduled date'
-};
-
-// A free-text "anything else?" box shown under every role's daily entry, so any
-// role holder can note extra work they did outside their usual reporting fields.
-export const OTHER_WORK_FIELD = {
-  key: 'other', short: 'Other work', label: 'Other / additional work done today',
-  placeholder: 'Anything else you did today that isn’t covered above — a task you helped with, a favour for another team, anything worth mentioning…',
-  rows: 3
+  title: 'Title', name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
+  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position'
 };
 
 export const ROLES = {

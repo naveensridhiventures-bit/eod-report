@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft } from 'lucide-react';
+import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag } from 'lucide-react';
 import { RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
 import { parseBulk, readSheetFile } from '../lib/parse';
 import { saveRecords } from '../lib/api';
@@ -15,9 +15,9 @@ export function StatusChip({ type, value }) {
 
 function cellValue(type, col, r) {
   if (col === 'status' || col === 'type') return <StatusChip type={type} value={r[col]} />;
+  if (col === 'title') return r.title ? <span className="title-tag">{r.title}</span> : '';
   if (col === 'amount') return r.amount ? inr(r.amount) : '';
   if (col === 'qty') return r.qty ? fmtQty(r.qty) : '';
-  if (col === 'interviewDate') return r.interviewDate ? fmtDate(r.interviewDate, { day: 'numeric', month: 'short' }) : '';
   return r[col] || '';
 }
 
@@ -74,49 +74,81 @@ function PreviewSummary({ type, rows }) {
   }
   return (
     <div className="preview-sum">
-      <strong>{rows.length} {def.short.toLowerCase()} found</strong>
+      <strong>{rows.length} {def.noun} found</strong>
       {chips}
       {noPhone > 0 && <span className="chip chip-bad">{noPhone} without number</span>}
     </div>
   );
 }
 
+const recentKey = (type) => `pulse_titles_${type}`;
+function recentTitles(type) {
+  try { return JSON.parse(localStorage.getItem(recentKey(type))) || []; } catch { return []; }
+}
+function rememberTitle(type, title) {
+  try {
+    const list = [title, ...recentTitles(type).filter((t) => t.toLowerCase() !== title.toLowerCase())].slice(0, 6);
+    localStorage.setItem(recentKey(type), JSON.stringify(list));
+  } catch { /* ignore */ }
+}
+
 /** Paste / upload → check → save */
 export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
   const def = RECORD_TYPES[type];
+  const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [rows, setRows] = useState(null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
+  const titleRef = useRef(null);
+
+  const suggestions = [...new Set([...recentTitles(type), ...(def.titles || [])])].slice(0, 8);
+  const needTitle = () => {
+    if (title.trim()) return false;
+    notify('Add a title for this list first — e.g. Driver, Sales, Distributor hiring.', 'error');
+    titleRef.current?.focus();
+    return true;
+  };
+  const stamp = (parsed) => parsed.map((r) => ({ ...r, title: r.title || title.trim() }));
 
   const read = () => {
+    if (needTitle()) return;
     const parsed = parseBulk(type, text);
     if (!parsed.length) { notify('No rows found. Put one entry per line with a name and number.', 'error'); return; }
-    setRows(parsed);
+    setRows(stamp(parsed));
   };
 
   const upload = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || needTitle()) return;
     try {
       const parsed = parseBulk(type, await readSheetFile(file));
       if (!parsed.length) { notify('No rows found in that file. Check it has a Name and Number column.', 'error'); return; }
-      setRows(parsed);
+      setRows(stamp(parsed));
     } catch (err) {
       notify(`Couldn’t read that file: ${err.message}`, 'error');
     }
+  };
+
+  // Changing the title on the preview screen updates every row that still has the old one
+  const retitle = (v) => {
+    const old = title.trim();
+    setTitle(v);
+    if (rows) setRows((rs) => rs.map((r) => (r.title === old || !r.title ? { ...r, title: v.trim() } : r)));
   };
 
   const edit = (i, col, v) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [col]: v } : r)));
   const remove = (i) => setRows((rs) => rs.filter((_, j) => j !== i));
 
   const save = async () => {
+    if (rows.some((r) => !String(r.title || '').trim())) { notify('Every row needs a title.', 'error'); return; }
     setSaving(true);
     try {
-      const clean = rows.map((r) => ({ ...r, qty: r.qty !== undefined ? Number(r.qty) || 0 : undefined, amount: r.amount !== undefined ? Number(r.amount) || 0 : undefined }));
+      const clean = rows.map((r) => ({ ...r, title: String(r.title).trim(), qty: r.qty !== undefined ? Number(r.qty) || 0 : undefined, amount: r.amount !== undefined ? Number(r.amount) || 0 : undefined }));
       await saveRecords(type, clean, { date, employeeId: user.id, employee: user.name });
-      notify(`${rows.length} ${def.short.toLowerCase()} saved`);
+      rememberTitle(type, title.trim());
+      notify(`${rows.length} ${def.noun} saved under “${title.trim()}”`);
       onSaved();
       onClose();
     } catch (e) {
@@ -125,6 +157,22 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
       setSaving(false);
     }
   };
+
+  const titleBox = (
+    <div className="title-box">
+      <label className="label" htmlFor="bi-title-input"><Tag size={15} /> List title <span className="req">required</span></label>
+      <input id="bi-title-input" ref={titleRef} className="input title-input" value={title} onChange={(e) => retitle(e.target.value)}
+        placeholder={def.titleHint} autoFocus={!rows} maxLength={60} />
+      {!rows && suggestions.length > 0 && (
+        <div className="title-chips">
+          {suggestions.map((t) => (
+            <button key={t} type="button" className={`chip chip-btn ${title === t ? 'on' : ''}`} onClick={() => retitle(t)}>{t}</button>
+          ))}
+        </div>
+      )}
+      <p className="hint">Every row in this list is saved under this title, so you can filter and report by it later.</p>
+    </div>
+  );
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -137,38 +185,38 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
           <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={20} /></button>
         </div>
 
+        {titleBox}
+
         {!rows ? (
           <>
-            <p style={{ fontSize: 14, marginBottom: 10 }}>
-              Paste your list, one per line — <b>name, number, then {def.cols.slice(2).map((c) => COL_LABELS[c].toLowerCase()).join(', ')}</b>.
+            <p style={{ fontSize: 14, margin: '16px 0 10px' }}>
+              Paste your list, one per line — <b>name, number, then {def.cols.filter((c) => !['title', 'name', 'phone'].includes(c)).map((c) => COL_LABELS[c].toLowerCase()).join(', ')}</b>.
               Copy straight from Excel, WhatsApp or notes. {def.statuses && type !== 'customers' && 'The status is picked up from your remarks; you can change it on the next screen.'}
             </p>
-            <textarea className="textarea mono" rows={9} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} autoFocus />
+            <textarea className="textarea mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} />
             <div className="bi-actions">
               <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}><Upload size={17} /> Upload Excel / CSV</button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={upload} />
               <button className="btn btn-primary" onClick={read} disabled={!text.trim()}><Wand2 size={17} /> Read list</button>
             </div>
-            <p className="hint">Excel files need a header row, e.g. {def.cols.map((c) => COL_LABELS[c].replace(' (₹)', '')).join(' | ')}.</p>
+            <p className="hint">Excel files need a header row, e.g. {def.cols.filter((c) => c !== 'title').map((c) => COL_LABELS[c].replace(' (₹)', '')).join(' | ')}.</p>
           </>
         ) : (
           <>
-            <PreviewSummary type={type} rows={rows} />
+            <div style={{ marginTop: 14 }}><PreviewSummary type={type} rows={rows} /></div>
             <div className="table-wrap bi-table">
               <table className="table">
                 <thead><tr><th>#</th>{def.cols.map((c) => <th key={c}>{COL_LABELS[c]}</th>)}<th aria-label="Remove" /></tr></thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={i} className={r.status === 'interested' ? 'hl' : ''}>
+                    <tr key={i} className={r.status === 'interested' || r.status === 'scheduled' ? 'hl' : ''}>
                       <td className="muted">{i + 1}</td>
                       {def.cols.map((c) => (
                         <td key={c}>
                           {(c === 'status' || c === 'type') ? (
                             <select className="cell-input" value={r[c]} onChange={(e) => edit(i, c, e.target.value)}>
-                              {def.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                              {def.statuses.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
                             </select>
-                          ) : c === 'interviewDate' ? (
-                            <input type="date" className="cell-input" value={r.interviewDate ?? ''} onChange={(e) => edit(i, c, e.target.value)} placeholder={r.status === 'scheduled' ? 'When?' : ''} />
                           ) : (
                             <input className={`cell-input ${c}`} value={r[c] ?? ''} onChange={(e) => edit(i, c, e.target.value)} inputMode={['qty', 'amount', 'phone'].includes(c) ? 'decimal' : undefined} />
                           )}
@@ -183,7 +231,7 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
             <div className="bi-actions">
               <button className="btn btn-ghost" onClick={() => setRows(null)}><ArrowLeft size={17} /> Edit pasted text</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !rows.length}>
-                {saving ? <Loader2 size={17} className="spin" /> : <ClipboardPaste size={17} />} Save {rows.length} {def.short.toLowerCase()}
+                {saving ? <Loader2 size={17} className="spin" /> : <ClipboardPaste size={17} />} Save {rows.length} {def.noun}
               </button>
             </div>
           </>

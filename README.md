@@ -15,15 +15,17 @@ Every employee signs in with their name and a 4-digit PIN, fills in the numbers 
 | Customers | name, number, area, new/existing | Keeps each telecaller's customer list (one row per number) — new vs existing. |
 | Cancellations | name, number, product, qty, amount, reason | Counts cancelled orders and value lost. |
 
-**HR** pastes their candidate calls: name, number, position, area/location, remarks. Each is tagged Interview scheduled / Joined / Driver arranged / Relieved / Not interested / No answer / Called, so the app counts calls, scheduled, joined and relieved. When a call is tagged **Interview scheduled**, the app also tries to read an actual date out of the remarks (“tomorrow”, “Monday”, “15/10”, “15 Oct”…) and stores it as the interview date — editable on the preview screen with a date picker before saving.
+**HR** pastes their candidate calls: name, number, position, remarks. Each is tagged Interview scheduled / Joined / Driver arranged / Relieved / Not interested / No answer / Called, so the app counts calls, scheduled, joined and relieved.
 
 **Developers** write what they worked on as text (plus blockers).
 
 **Sales head** (Naveen) gets all of the above plus a team update box.
 
-Everyone can add wins, challenges, a plan for tomorrow, an **“other work”** note (anything outside your usual role — a favour for another team, an ad-hoc task, anything worth mentioning) and a day rating. The status picked from remarks can be changed on the preview screen before saving.
+**Every import starts with a list title** (e.g. *Driver*, *Call driver*, *Sales*, *Distributor hiring*). The title is saved on every row of that list, shown in the dashboard's "By list title" table, the Call data filter, the Excel "By title" sheet and the emails.
 
-Excel uploads need a header row. Recognised headers include: Name, Number/Mobile/Phone, Remarks, Status, Product, Qty, Unit, Amount, Area/Location, Type, Reason, Position, Interview date.
+Everyone can add wins, challenges, a plan for tomorrow and a day rating. The status picked from remarks can be changed on the preview screen before saving.
+
+Excel uploads need a header row. Recognised headers include: Name, Number/Mobile/Phone, Remarks, Status, Product, Qty, Unit, Amount, Area, Type, Reason, Position.
 
 Team setup (edit in the Google Sheet's `Employees` tab once live):
 
@@ -55,7 +57,7 @@ Open http://localhost:5173. With no Sheet connected, the app runs in demo mode w
 1. Create a new Google Sheet (e.g. "Team Pulse Database").
 2. **Extensions → Apps Script**. Delete the sample code, paste all of `apps-script/Code.gs`, click **Save**.
 3. In the function dropdown pick **setup** and click **Run**. Approve the permissions. This creates the tabs `Employees`, `Reports`, `Calls`, `Orders`, `Customers`, `Cancellations`, `HR Calls` and `Settings`.
-4. Open the `Settings` tab and set `MANAGEMENT_EMAILS` (comma-separated — defaults to `hiring.sridhiventures@gmail.com` once you run `setup`) and `COMPANY_NAME`. You can also manage both later from the app's **Settings** page instead of editing the sheet.
+4. Open the `Settings` tab and set `MANAGEMENT_EMAILS` (comma-separated) and `COMPANY_NAME`.
 5. **Deploy → New deployment → Web app**
    - Execute as: **Me**
    - Who has access: **Anyone**
@@ -78,28 +80,16 @@ Employees open the link on their phone and choose **Add to Home Screen** (Androi
 
 ## How reports reach management
 
-- **Every submission** → emailed to management instantly (turn off with the “Email management automatically…” toggle on the **Settings** page, or `NOTIFY_ON_SUBMIT = no` in the Settings sheet).
+Reports are emailed to **hiring.sridhiventures@gmail.com** by default. Admins (Naveen, Management) can change the addresses, company name and app link under **Email settings** in the app — saving asks for the admin PIN.
+
+The email shows counts at the top, then **interested customers** and **interviews scheduled** in full (name, tap-to-call number, remarks, who called), grouped by list title. Everything else is shown as counts only. Run `sendTestEmail()` in Apps Script to preview it.
+
+- **Every submission** → emailed to management instantly (turn off with `NOTIFY_ON_SUBMIT = no` in Settings).
 - **Every evening** → one team summary email, showing who submitted and who didn't.
 - **Share on WhatsApp** button after each submission, pre-filled with the formatted EOD.
 - **Team dashboard** (Naveen and Management) with today's check-in, KPIs, charts and per-person tables.
 - **Call data** page → search and filter every call, order, customer, cancellation and HR call by date, person and status; download any list to Excel.
-- **Download reports** → This week / Last week / This month / Last month / Custom dates, whole team or one person, as Excel (summary, interested calls, all calls, orders, cancelled, customers, HR calls, daily updates) or PDF (simple report with interested calls highlighted). Admins also get an **“Email to management”** button here that sends the same PDF straight to the configured recipients as an attachment — handy for sending the monthly numbers without downloading anything.
-
-## Who gets emailed — the Settings page
-
-Go to **Settings** (visible to admins) to manage, without touching the spreadsheet:
-- The list of management email addresses that receive every EOD, the evening summary, and anything sent from “Download reports”. Defaults to `hiring.sridhiventures@gmail.com` — add as many as you like, remove any with the ✕.
-- The company name shown in email subjects and headers.
-- Whether management gets emailed automatically on every submission.
-
-This reads and writes the same `Settings` sheet the Apps Script backend uses, so it's equivalent to editing the sheet by hand — just friendlier.
-
-## Speed
-
-- Pages show the last loaded data instantly and refresh quietly in the background (cache is cleared on save, delete and sign-out).
-- Dashboards and reports fetch everything in one request; Apps Script also caches results for 10 minutes and clears them on every save. If you edit the Sheet by hand, run `refreshCache` in Apps Script to see it immediately.
-- Submitting a report no longer waits for the management email: it is sent a second later in the background.
-- Charts, Excel and PDF code load only when those pages are opened.
+- **Download reports** → This week / Last week / This month / Last month / Custom dates, whole team or one person, as Excel (summary, interested calls, all calls, orders, cancelled, customers, HR calls, daily updates) or PDF (simple report with interested calls highlighted).
 
 ## Customising
 

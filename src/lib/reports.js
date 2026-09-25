@@ -1,7 +1,7 @@
 import { ROLES, SNAPSHOT, MOODS, RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
 import { fmtDate } from './date';
 import { inr } from './format';
-import { perPerson, statsFor, fmtQty } from './stats';
+import { perPerson, statsFor, fmtQty, groupByTitle } from './stats';
 
 export const moodLabel = (v) => MOODS.find((m) => m.value === Number(v))?.label || '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -24,19 +24,24 @@ export function eodText(report, dayRecords) {
   const interested = (dayRecords?.calls || []).filter((c) => c.status === 'interested');
   if (interested.length) {
     lines.push(`*Interested customers (${interested.length})*`);
-    interested.slice(0, 15).forEach((c) => lines.push(`• ${c.name}${c.phone ? ` (${c.phone})` : ''}${c.remarks ? ` — ${c.remarks}` : ''}`));
+    groupByTitle(interested).forEach((g) => {
+      lines.push(`_${g.title}_`);
+      g.rows.slice(0, 20).forEach((c) => lines.push(`• ${c.name}${c.phone ? ` (${c.phone})` : ''}${c.remarks ? ` — ${c.remarks}` : ''}`));
+    });
     lines.push('');
   }
-  const hrGood = (dayRecords?.hiring || []).filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status));
-  if (hrGood.length) {
-    lines.push('*Hiring highlights*');
-    hrGood.slice(0, 15).forEach((c) => lines.push(`• ${c.name}${c.position ? `, ${c.position}` : ''} — ${statusInfo('hiring', c.status).label}`));
+  const scheduled = (dayRecords?.hiring || []).filter((c) => c.status === 'scheduled');
+  if (scheduled.length) {
+    lines.push(`*Interviews scheduled (${scheduled.length})*`);
+    groupByTitle(scheduled).forEach((g) => {
+      lines.push(`_${g.title}_`);
+      g.rows.slice(0, 20).forEach((c) => lines.push(`• ${c.name}${c.phone ? ` (${c.phone})` : ''}${c.remarks ? ` — ${c.remarks}` : ''}`));
+    });
     lines.push('');
   }
   TEXT_FIELDS.forEach((f) => { if (report.notes?.[f.key]) lines.push(`*${f.short}:* ${report.notes[f.key]}`); });
   if (report.positives) lines.push(`*Wins today:* ${report.positives}`);
   if (report.challenges) lines.push(`*Challenges:* ${report.challenges}`);
-  if (report.other) lines.push(`*Other work:* ${report.other}`);
   if (report.tomorrow) lines.push(`*Plan for tomorrow:* ${report.tomorrow}`);
   if (report.mood) lines.push(`*Day rating:* ${moodLabel(report.mood)}`);
   return lines.join('\n');
@@ -85,7 +90,7 @@ function updateRows(reports) {
   return [...reports].sort(byDateAsc).map((r) => {
     const row = { Date: r.date, Employee: r.name };
     TEXT_FIELDS.forEach((f) => { row[f.short] = r.notes?.[f.key] || ''; });
-    Object.assign(row, { 'Wins today': r.positives || '', Challenges: r.challenges || '', 'Other work': r.other || '', 'Plan for tomorrow': r.tomorrow || '', 'Day rating': moodLabel(r.mood) });
+    Object.assign(row, { 'Wins today': r.positives || '', Challenges: r.challenges || '', 'Plan for tomorrow': r.tomorrow || '', 'Day rating': moodLabel(r.mood) });
     return row;
   });
 }
@@ -107,7 +112,13 @@ export async function exportExcel({ records, reports, employees, from, to, title
   ws['!cols'] = Object.keys(summary[0] || { a: 1 }).map((k) => ({ wch: Math.max(12, k.length + 2) }));
   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
 
+  const byTitle = [
+    ...groupByTitle(records.calls).map((g) => ({ Kind: 'Customer calls', Title: g.title, Calls: g.rows.length, Interested: g.rows.filter((r) => r.status === 'interested').length, 'Call backs': g.rows.filter((r) => r.status === 'callback').length, Scheduled: '', Joined: '', Relieved: '' })),
+    ...groupByTitle(records.hiring).map((g) => ({ Kind: 'HR calls', Title: g.title, Calls: g.rows.length, Interested: '', 'Call backs': '', Scheduled: g.rows.filter((r) => r.status === 'scheduled').length, Joined: g.rows.filter((r) => r.status === 'joined' || r.status === 'driver_arranged').length, Relieved: g.rows.filter((r) => r.status === 'relieved').length }))
+  ];
+  add('By title', byTitle);
   add('Interested calls', recordRows('calls', records.calls.filter((c) => c.status === 'interested')));
+  add('Scheduled interviews', recordRows('hiring', records.hiring.filter((c) => c.status === 'scheduled')));
   add('All calls', recordRows('calls', records.calls));
   add('Orders', recordRows('orders', records.orders));
   add('Cancelled', recordRows('cancellations', records.cancellations));
@@ -119,8 +130,7 @@ export async function exportExcel({ records, reports, employees, from, to, title
 }
 
 // ── PDF ─────────────────────────────────────────────────────────
-// Builds the jsPDF doc only — used by both the local download and the "email to management" send.
-async function buildPDF({ records, reports, employees, from, to, title }) {
+export async function exportPDF({ records, reports, employees, from, to, title }) {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
@@ -177,38 +187,25 @@ async function buildPDF({ records, reports, employees, from, to, title }) {
     ]));
 
   const interested = [...records.calls].filter((c) => c.status === 'interested').sort(byDateAsc);
-  section(`Interested & positive calls (${interested.length})`, ['Date', 'Telecaller', 'Customer', 'Number', 'Remarks'],
-    interested.map((c) => [c.date, c.employee, c.name, c.phone, c.remarks]), { columnStyles: { 4: { cellWidth: 320 } } });
+  section(`Interested & positive calls (${interested.length})`, ['Date', 'Telecaller', 'Title', 'Customer', 'Number', 'Remarks'],
+    interested.map((c) => [c.date, c.employee, c.title, c.name, c.phone, c.remarks]), { columnStyles: { 5: { cellWidth: 280 } } });
 
   const hrGood = [...records.hiring].filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status)).sort(byDateAsc);
-  section('Hiring highlights', ['Date', 'HR', 'Candidate', 'Number', 'Position', 'Area', 'Status', 'Scheduled for', 'Remarks'],
-    hrGood.map((c) => [c.date, c.employee, c.name, c.phone, c.position, c.area, statusInfo('hiring', c.status).label, c.interviewDate ? fmtDate(c.interviewDate) : '', c.remarks]));
+  section('Hiring highlights', ['Date', 'HR', 'Title', 'Candidate', 'Number', 'Status', 'Remarks'],
+    hrGood.map((c) => [c.date, c.employee, c.title, c.name, c.phone, statusInfo('hiring', c.status).label, c.remarks]));
 
   section('Cancelled orders', ['Date', 'Telecaller', 'Customer', 'Product', 'Qty', 'Amount', 'Reason'],
     [...records.cancellations].sort(byDateAsc).map((c) => [c.date, c.employee, c.name, c.product, `${fmtQty(c.qty)} ${c.unit || ''}`, rs(c.amount), c.reason]));
 
-  const updates = [...reports].sort(byDateAsc).filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key]) || r.positives || r.challenges || r.other);
-  section('Daily updates', ['Date', 'Employee', 'Work / update', 'Wins', 'Other work', 'Challenges'],
-    updates.map((r) => [r.date, r.name, TEXT_FIELDS.map((f) => r.notes?.[f.key]).filter(Boolean).join('\n'), r.positives, r.other, r.challenges]),
-    { columnStyles: { 2: { cellWidth: 220 } } });
+  const updates = [...reports].sort(byDateAsc).filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key]) || r.positives || r.challenges);
+  section('Daily updates', ['Date', 'Employee', 'Work / update', 'Wins', 'Challenges'],
+    updates.map((r) => [r.date, r.name, TEXT_FIELDS.map((f) => r.notes?.[f.key]).filter(Boolean).join('\n'), r.positives, r.challenges]),
+    { columnStyles: { 2: { cellWidth: 260 } } });
 
   const pages = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
     doc.text(`Team Pulse  |  Generated ${new Date().toLocaleString('en-IN')}  |  Page ${i} of ${pages}`, 36, H - 18);
   }
-  return doc;
-}
-
-export async function exportPDF(opts) {
-  const doc = await buildPDF(opts);
-  doc.save(`${slug(opts.title)}_${opts.from}_to_${opts.to}.pdf`);
-}
-
-/** Same report, returned as a base64 string (no data: prefix) + filename — ready to email as an attachment. */
-export async function reportPDFBase64(opts) {
-  const doc = await buildPDF(opts);
-  const uri = doc.output('datauristring'); // "data:application/pdf;filename=...;base64,XXXX"
-  const base64 = uri.slice(uri.indexOf('base64,') + 7);
-  return { base64, filename: `${slug(opts.title)}_${opts.from}_to_${opts.to}.pdf` };
+  doc.save(`${slug(title)}_${from}_to_${to}.pdf`);
 }

@@ -175,8 +175,6 @@ button { cursor: pointer; }
 .chip-bad { background: var(--bad-soft); color: #a8302a; }
 .chip-gold { background: var(--marigold-soft); color: #87540a; }
 .role-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.switch-row { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
-.switch-row input { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; }
 
 .segmented { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 2px; flex-wrap: wrap; }
 .segmented button { border: 0; background: transparent; padding: 7px 14px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--muted); }
@@ -446,3 +444,16 @@ select.cell-input { min-width: 150px; border-color: var(--line); background: #ff
 .table.compact th, .table.compact td { padding-left: 12px; padding-right: 12px; }
 .cell-input.phone { min-width: 118px; }
 @media (max-width: 860px) { .bi-actions .btn { flex: 1; } }
+
+/* ─────────────  List titles  ───────────── */
+.title-box { background: var(--marigold-soft); border: 1px solid #f2d9ae; border-radius: 14px; padding: 14px 16px; }
+.title-box .label { display: flex; align-items: center; gap: 6px; color: #6b4309; }
+.title-box .req { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #a8651a; background: #fff; border-radius: 999px; padding: 1px 8px; }
+.title-input { font-family: var(--f-display); font-size: 18px; font-weight: 700; border-color: #ecc98b; }
+.title-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip-btn { border: 1px solid #ecc98b; background: #fff; cursor: pointer; }
+.chip-btn:hover { border-color: var(--ever-3); }
+.chip-btn.on { background: var(--ever); color: #fff; border-color: var(--ever); }
+.title-tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 6px; background: #fdf0db; color: #87540a; white-space: nowrap; }
+.cell-input.title { min-width: 120px; font-weight: 600; }
+.table-wrap.flat { margin: 0; border: 1px solid var(--line); border-radius: 12px; }

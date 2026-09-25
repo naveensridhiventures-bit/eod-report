@@ -1,16 +1,14 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings as SettingsIcon } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
+import MyReports from './pages/MyReports';
+import TeamDashboard from './pages/TeamDashboard';
+import ReportsCenter from './pages/ReportsCenter';
+import RecordsPage from './pages/RecordsPage';
+import SettingsPage from './pages/SettingsPage';
 import { Avatar, Toast } from './components/ui';
-import { fetchEmployees, peekEmployees, clearCache, IS_DEMO } from './lib/api';
-
-// Heavy pages (charts, exports) load only when opened, so the app starts fast
-const MyReports = lazy(() => import('./pages/MyReports'));
-const TeamDashboard = lazy(() => import('./pages/TeamDashboard'));
-const ReportsCenter = lazy(() => import('./pages/ReportsCenter'));
-const RecordsPage = lazy(() => import('./pages/RecordsPage'));
-const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+import { fetchEmployees, IS_DEMO } from './lib/api';
 
 const SESSION_KEY = 'pulse_user_v1';
 
@@ -28,7 +26,7 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
   });
-  const [employees, setEmployees] = useState(() => peekEmployees() || []);
+  const [employees, setEmployees] = useState([]);
   const [page, setPage] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -36,7 +34,7 @@ export default function App() {
   const clearToast = useCallback(() => setToast(null), []);
 
   useEffect(() => {
-    fetchEmployees(setEmployees).then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
+    fetchEmployees().then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
   }, [notify]);
 
   useEffect(() => {
@@ -50,7 +48,6 @@ export default function App() {
   };
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
-    clearCache();
     setUser(null);
     setPage(null);
   };
@@ -70,7 +67,7 @@ export default function App() {
     user.isAdmin && { key: 'team', label: 'Team dashboard', short: 'Team', icon: LayoutDashboard },
     (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'records', label: 'Call data', short: 'Data', icon: Contact },
     { key: 'reports', label: 'Download reports', short: 'Download', icon: FileDown },
-    user.isAdmin && { key: 'settings', label: 'Settings', short: 'Settings', icon: SettingsIcon }
+    user.isAdmin && { key: 'settings', label: 'Email settings', short: 'Settings', icon: Settings, desktopOnly: true }
   ].filter(Boolean);
 
   const props = { user, employees, notify, goTo: setPage };
@@ -98,22 +95,23 @@ export default function App() {
       <div className="main">
         <header className="topbar">
           <div className="brand"><Logo /><span className="brand-name">Team Pulse</span></div>
-          <button className="logout" onClick={logout} aria-label="Sign out"><Avatar person={user} size={30} /><LogOut size={16} /></button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {user.isAdmin && <button className="logout" onClick={() => setPage('settings')} aria-label="Email settings"><Settings size={19} /></button>}
+            <button className="logout" onClick={logout} aria-label="Sign out"><Avatar person={user} size={30} /><LogOut size={16} /></button>
+          </span>
         </header>
         {IS_DEMO && <div className="demo-banner">Demo mode — reports are saved in this browser only. Add your Google Sheet link to go live.</div>}
 
-        <Suspense fallback={<div className="page"><p style={{ opacity: 0.6 }}>Loading…</p></div>}>
-          {page === 'today' && <DailyEntry {...props} />}
-          {page === 'history' && <MyReports {...props} />}
-          {page === 'team' && <TeamDashboard {...props} />}
-          {page === 'reports' && <ReportsCenter {...props} />}
-          {page === 'records' && <RecordsPage {...props} />}
-          {page === 'settings' && <SettingsPage {...props} />}
-        </Suspense>
+        {page === 'today' && <DailyEntry {...props} />}
+        {page === 'history' && <MyReports {...props} />}
+        {page === 'team' && <TeamDashboard {...props} />}
+        {page === 'reports' && <ReportsCenter {...props} />}
+        {page === 'records' && <RecordsPage {...props} />}
+        {page === 'settings' && <SettingsPage {...props} />}
       </div>
 
       <nav className="tabbar" aria-label="Main">
-        {nav.map((n) => (
+        {nav.filter((n) => !n.desktopOnly).map((n) => (
           <button key={n.key} className={`tab ${page === n.key ? 'active' : ''}`} onClick={() => setPage(n.key)}>
             <n.icon size={20} /> {n.short}
           </button>

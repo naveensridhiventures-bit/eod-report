@@ -30,30 +30,31 @@ export default function RecordsPage({ user, employees, notify }) {
   const [custom, setCustom] = useState(monthRange());
   const [who, setWho] = useState(canSeeAll ? 'all' : user.id);
   const [status, setStatus] = useState('all');
+  const [title, setTitle] = useState('all');
   const [q, setQ] = useState('');
   const [records, setRecords] = useState(null);
   const [busy, setBusy] = useState(false);
   const { from, to } = rangeFor(kind, custom);
 
   const load = () => {
-    let live = true;
     setRecords(null);
-    fetchRecords({ types: myTypes, from, to, employeeId: who === 'all' ? undefined : who }, (r) => { if (live) setRecords(r); })
-      .then((r) => { if (live) setRecords(r); })
-      .catch((e) => { if (live) { setRecords({}); notify(e.message, 'error'); } });
-    return () => { live = false; };
+    fetchRecords({ types: myTypes, from, to, employeeId: who === 'all' ? undefined : who })
+      .then(setRecords)
+      .catch((e) => { setRecords({}); notify(e.message, 'error'); });
   };
   useEffect(load, [from, to, who, myTypes]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setStatus('all'); }, [type]);
+  useEffect(() => { setStatus('all'); setTitle('all'); }, [type]);
 
   const def = RECORD_TYPES[type];
+  const titleOptions = useMemo(() => [...new Map((records?.[type] || []).filter((r) => r.title).map((r) => [r.title.toLowerCase(), r.title])).entries()], [records, type]);
   const rows = useMemo(() => {
     let list = records?.[type] || [];
     if (status !== 'all') list = list.filter((r) => (type === 'customers' ? r.type : r.status) === status);
+    if (title !== 'all') list = list.filter((r) => (r.title || '').toLowerCase() === title);
     const s = q.trim().toLowerCase();
     if (s) list = list.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(s)));
     return list;
-  }, [records, type, status, q]);
+  }, [records, type, status, title, q]);
 
   const download = async () => {
     setBusy(true);
@@ -120,6 +121,15 @@ export default function RecordsPage({ user, employees, notify }) {
               <select id="rc-status" className="select" value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="all">All</option>
                 {def.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
+          {titleOptions.length > 0 && (
+            <div className="field">
+              <label className="label" htmlFor="rc-title">Title</label>
+              <select id="rc-title" className="select" value={title} onChange={(e) => setTitle(e.target.value)}>
+                <option value="all">All titles</option>
+                {titleOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
           )}

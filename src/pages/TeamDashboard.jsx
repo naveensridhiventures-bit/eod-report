@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { Mail, Loader2, PhoneCall, UserPlus, Star, MessageSquareText, Phone } from 'lucide-react';
+import { Mail, Loader2, PhoneCall, UserPlus, Star, MessageSquareText, Phone, Tags } from 'lucide-react';
 
-import { fetchReports, fetchBundle, emailEODNow, IS_DEMO } from '../lib/api';
-import { statsFor, perPerson, fmtQty } from '../lib/stats';
+import { fetchReports, fetchRecords, emailEODNow, IS_DEMO } from '../lib/api';
+import { statsFor, perPerson, fmtQty, groupByTitle } from '../lib/stats';
 import { TEXT_FIELDS } from '../lib/reports';
 import { todayISO, weekRange, monthRange, fmtDate, fromISO, daysBetween } from '../lib/date';
 import { inr, num, pct, compactInr } from '../lib/format';
@@ -37,21 +37,13 @@ export default function TeamDashboard({ employees, notify, goTo }) {
   const { from, to } = rangeFor(kind, custom);
 
   useEffect(() => {
-    let live = true;
-    const apply = ({ records: rec, reports: rep }) => { if (live) { setRecords(rec); setReports(rep); } };
     setRecords(null);
-    fetchBundle({ from, to }, apply)
-      .then(apply)
-      .catch((e) => { if (live) { setRecords({ calls: [], orders: [], customers: [], cancellations: [], hiring: [] }); notify(e.message, 'error'); } });
-    return () => { live = false; };
+    Promise.all([fetchRecords({ from, to }), fetchReports({ from, to })])
+      .then(([rec, rep]) => { setRecords(rec); setReports(rep); })
+      .catch((e) => { setRecords({ calls: [], orders: [], customers: [], cancellations: [], hiring: [] }); notify(e.message, 'error'); });
   }, [from, to, notify]);
 
-  useEffect(() => {
-    let live = true;
-    const t = { from: todayISO(), to: todayISO() };
-    fetchReports(t, (l) => { if (live) setTodays(l); }).then((l) => { if (live) setTodays(l); }).catch(() => {});
-    return () => { live = false; };
-  }, []);
+  useEffect(() => { fetchReports({ from: todayISO(), to: todayISO() }).then(setTodays).catch(() => {}); }, []);
 
   const staff = useMemo(() => employees.filter((e) => !e.viewOnly), [employees]);
   const t = useMemo(() => (records ? statsFor(records, { from, to }) : null), [records, from, to]);
@@ -146,7 +138,7 @@ export default function TeamDashboard({ employees, notify, goTo }) {
                   <div className="hl-item" key={c.id}>
                     <span className="hl-dot" />
                     <div>
-                      <div className="hl-name">{c.name}</div>
+                      <div className="hl-name">{c.name} {c.title && <span className="title-tag">{c.title}</span>}</div>
                       {c.remarks && <div className="hl-remark">{c.remarks}</div>}
                       <div className="hl-meta">{c.employee}, {fmtDate(c.date, { day: 'numeric', month: 'short' })}</div>
                     </div>
@@ -155,6 +147,39 @@ export default function TeamDashboard({ employees, notify, goTo }) {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-head"><h3><Tags size={18} /> By list title</h3></div>
+            <div className="grid-2">
+              <div className="table-wrap flat">
+                <table className="table compact">
+                  <thead><tr><th>Calls list</th><th className="r">Calls</th><th className="r">Interested</th><th className="r">Call backs</th></tr></thead>
+                  <tbody>
+                    {groupByTitle(records.calls).map((g) => (
+                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.rows.length)}</td>
+                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'interested').length)}</td>
+                        <td className="r">{num(g.rows.filter((r) => r.status === 'callback').length)}</td></tr>
+                    ))}
+                    {!records.calls.length && <tr><td colSpan={4} className="muted">No calls yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-wrap flat">
+                <table className="table compact">
+                  <thead><tr><th>Hiring for</th><th className="r">Calls</th><th className="r">Scheduled</th><th className="r">Joined</th><th className="r">Relieved</th></tr></thead>
+                  <tbody>
+                    {groupByTitle(records.hiring).map((g) => (
+                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.rows.length)}</td>
+                        <td className="r" style={{ color: 'var(--blue)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'scheduled').length)}</td>
+                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'joined' || r.status === 'driver_arranged').length)}</td>
+                        <td className="r" style={{ color: 'var(--bad)' }}>{num(g.rows.filter((r) => r.status === 'relieved').length)}</td></tr>
+                    ))}
+                    {!records.hiring.length && <tr><td colSpan={5} className="muted">No HR calls yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
           <div className="panel" style={{ marginBottom: 16 }}>
@@ -248,7 +273,7 @@ export default function TeamDashboard({ employees, notify, goTo }) {
                     <div className="hl-item" key={c.id}>
                       <span className="hl-dot" style={{ background: 'var(--blue)' }} />
                       <div>
-                        <div className="hl-name">{c.name}{c.position ? `, ${c.position}` : ''}</div>
+                        <div className="hl-name">{c.name} {c.title && <span className="title-tag">{c.title}</span>}</div>
                         <div className="hl-meta">{c.employee}, {fmtDate(c.date, { day: 'numeric', month: 'short' })}{c.phone ? `, ${c.phone}` : ''}</div>
                       </div>
                       <StatusChip type="hiring" value={c.status} />

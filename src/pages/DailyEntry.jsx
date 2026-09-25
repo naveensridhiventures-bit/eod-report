@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sparkles, Save, Loader2, Check, Copy, Send, CheckCircle2, Clock, Upload } from 'lucide-react';
-import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT, OTHER_WORK_FIELD } from '../config/team';
+import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT } from '../config/team';
 import { ROLE_ICONS, Loading, Segmented } from '../components/ui';
 import { BulkImport, RecordTable } from '../components/Records';
 import { fetchReports, saveReport, fetchRecords, deleteRecord } from '../lib/api';
@@ -9,7 +9,7 @@ import { statsFor, recordsOnDate, fmtQty } from '../lib/stats';
 import { toISO, todayISO, fromISO, addDays } from '../lib/date';
 import { inr } from '../lib/format';
 
-const blankForm = () => ({ notes: {}, positives: '', challenges: '', tomorrow: '', mood: 0, other: '' });
+const blankForm = () => ({ notes: {}, positives: '', challenges: '', tomorrow: '', mood: 0 });
 
 function calcStreak(dates) {
   const set = new Set(dates);
@@ -97,35 +97,27 @@ export default function DailyEntry({ user, notify }) {
   const hasImports = user.roles.some((r) => ROLES[r]?.imports.length);
 
   useEffect(() => {
-    let live = true;
-    const q = { employeeId: user.id, from: toISO(addDays(new Date(), -120)) };
-    fetchReports(q, (fresh) => { if (live) setHistory(fresh); })
-      .then((r) => { if (live) setHistory(r); })
-      .catch((e) => { if (live) { setHistory([]); notify(`Couldn’t load your past reports: ${e.message}`, 'error'); } });
-    return () => { live = false; };
+    fetchReports({ employeeId: user.id, from: toISO(addDays(new Date(), -120)) })
+      .then(setHistory)
+      .catch((e) => { setHistory([]); notify(`Couldn’t load your past reports: ${e.message}`, 'error'); });
   }, [user.id, notify]);
 
   const loadRecords = useCallback(() => {
     if (!hasImports) { setRecords({}); return; }
-    const stale = { current: false };
-    const q = { employeeId: user.id, from: date, to: date };
-    fetchRecords(q, (fresh) => { if (!stale.current) setRecords(fresh); })
-      .then((r) => { if (!stale.current) setRecords(r); })
-      .catch((e) => { if (!stale.current) { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); } });
-    return () => { stale.current = true; };
+    fetchRecords({ employeeId: user.id, from: date, to: date })
+      .then(setRecords)
+      .catch((e) => { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); });
   }, [user.id, date, hasImports, notify]);
 
-  useEffect(() => { setRecords(null); return loadRecords(); }, [loadRecords]);
+  useEffect(() => { setRecords(null); loadRecords(); }, [loadRecords]);
 
   const existing = useMemo(() => history?.find((r) => r.date === date), [history, date]);
-  // Only reset the form when the saved report itself changes, so a background refresh never wipes what you're typing
-  const existingKey = existing ? `${existing.id}|${existing.submittedAt}` : '';
   useEffect(() => {
     if (!history) return;
     setForm(existing
-      ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0, other: existing.other || '' }
+      ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0 }
       : blankForm());
-  }, [existingKey, !!history]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [existing, history]);
 
   const streak = useMemo(() => calcStreak((history || []).map((r) => r.date)), [history]);
   const dayRecs = useMemo(() => (records ? recordsOnDate(records, date) : {}), [records, date]);
@@ -239,10 +231,6 @@ export default function DailyEntry({ user, notify }) {
               <label className="label" htmlFor="tomorrow">Plan for tomorrow</label>
               <textarea id="tomorrow" className="textarea" placeholder="Top priorities for tomorrow" value={form.tomorrow} onChange={(e) => setForm({ ...form, tomorrow: e.target.value })} />
             </div>
-          </div>
-          <div>
-            <label className="label" htmlFor={OTHER_WORK_FIELD.key}>{OTHER_WORK_FIELD.label}</label>
-            <textarea id={OTHER_WORK_FIELD.key} className="textarea" rows={OTHER_WORK_FIELD.rows} placeholder={OTHER_WORK_FIELD.placeholder} value={form.other} onChange={(e) => setForm({ ...form, other: e.target.value })} />
           </div>
           <div>
             <span className="label">How was your day?</span>

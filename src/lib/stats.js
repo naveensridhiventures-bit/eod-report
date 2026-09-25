@@ -58,3 +58,15 @@ export function perPerson(records, employees, range) {
 }
 
 export const fmtQty = (n) => (Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+/** Groups a list by its title: [{ title, rows }] sorted by size */
+export function groupByTitle(list = []) {
+  const map = new Map();
+  list.forEach((r) => {
+    const t = (r.title || 'Untitled').trim() || 'Untitled';
+    const key = t.toLowerCase();
+    if (!map.has(key)) map.set(key, { title: t, rows: [] });
+    map.get(key).rows.push(r);
+  });
+  return [...map.values()].sort((a, b) => b.rows.length - a.rows.length);
+}
