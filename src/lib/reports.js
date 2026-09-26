@@ -56,6 +56,7 @@ export function recordRows(type, list) {
       let v = r[c] ?? '';
       if (c === 'status' || c === 'type') v = statusInfo(type, v).label;
       if (c === 'amount' || c === 'qty') v = Number(v) || 0;
+      if (c === 'followUp' && v === 'done') v = 'Closed';
       row[COL_LABELS[c]] = v;
     });
     return row;

@@ -1,5 +1,5 @@
 /**
- * TEAM PULSE — Google Sheets backend  (v4: list titles + new email design)
+ * TEAM PULSE — Google Sheets backend  (v5: CRM follow-ups, reminder emails, Thanglish → English)
  * ------------------------------------------------------------
  * FIRST TIME
  * 1. Create a Google Sheet → Extensions → Apps Script.
@@ -8,6 +8,13 @@
  * 4. Deploy → New deployment → Web app
  *      Execute as: Me      Who has access: Anyone
  * 5. Run  createDailyTrigger()  once for the 8 PM summary email.
+ * 6. Run  createFollowUpTrigger()  once for the 9 AM follow-up reminder emails.
+ *
+ * ENGLISH BUTTON (Thanglish → English), optional:
+ *   Project Settings (⚙️) → Script properties → Add script property
+ *     ANTHROPIC_API_KEY = your Claude API key      (console.anthropic.com)
+ *   or GEMINI_API_KEY   = your Gemini API key      (aistudio.google.com)
+ *   Without a key the button still works using a basic word list.
  *
  * UPDATING: paste this file, run setup() again (it only adds what's
  * missing — your data stays), then Deploy → Manage deployments →
@@ -25,11 +32,11 @@ var BASE_HEADERS = ['id', 'date', 'employeeId', 'name', 'roles', 'submittedAt', 
 // Bulk-imported data: one tab per type. Extra columns are added automatically.
 var RECORD_BASE = ['id', 'date', 'employeeId', 'employee', 'createdAt'];
 var RECORD_SHEETS = {
-  calls: { sheet: 'Calls', cols: ['title', 'name', 'phone', 'remarks', 'status'] },
+  calls: { sheet: 'Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'] },
   orders: { sheet: 'Orders', cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount'] },
   customers: { sheet: 'Customers', cols: ['title', 'name', 'phone', 'area', 'type'] },
   cancellations: { sheet: 'Cancellations', cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'] },
-  hiring: { sheet: 'HR Calls', cols: ['title', 'name', 'phone', 'remarks', 'status'] }
+  hiring: { sheet: 'HR Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'] }
 };
 var NUMERIC_COLS = ['qty', 'amount'];
 var STATUS_LABELS = {
@@ -41,7 +48,9 @@ var SETTINGS_DEFAULTS = [
   ['MANAGEMENT_EMAILS', DEFAULT_EMAIL, 'Comma-separated emails that receive EOD reports (can be changed in the app)'],
   ['NOTIFY_ON_SUBMIT', 'yes', 'yes = email on every submission + evening summary; no = evening summary only'],
   ['COMPANY_NAME', 'Sridhi Ventures', 'Shown at the top of every email'],
-  ['APP_LINK', '', 'Your app link, for the "Open dashboard" button in emails']
+  ['APP_LINK', '', 'Your app link, for the "Open dashboard" button in emails'],
+  ['FOLLOWUP_EMAILS', 'yes', 'yes = every morning, email each person their follow-ups (needs their email in the Employees tab)'],
+  ['FOLLOWUP_DIGEST', 'no', 'yes = also email management the list of overdue follow-ups each morning']
 ];
 
 // ── One-time setup (safe to run again) ────────────────────────
@@ -107,7 +116,7 @@ function ensureHeaders(sh, wanted) {
     if (headers.indexOf(h) === -1) {
       headers.push(h);
       sh.getRange(1, headers.length).setValue(h);
-      if (h === 'phone' || h === 'date') sh.getRange(1, headers.length, sh.getMaxRows(), 1).setNumberFormat('@');
+      if (h === 'phone' || h === 'date' || h === 'followUp') sh.getRange(1, headers.length, sh.getMaxRows(), 1).setNumberFormat('@');
       added = true;
     }
   });
@@ -150,6 +159,10 @@ function doPost(e) {
     if (body.action === 'saveReport') return json(ok(saveReport(body.report)));
     if (body.action === 'saveRecords') return json(ok(saveRecords(body.type, body.records || [])));
     if (body.action === 'deleteRecord') return json(ok(deleteRecord(body.type, body.id)));
+    if (body.action === 'updateRecord') return json(ok(updateRecord(body.type, body.id, body.fields || {})));
+    if (body.action === 'polish') return json(ok(polishTexts(body.texts || [])));
+    if (body.action === 'saveMyEmail') return json(ok(saveMyEmail(body.employeeId, body.pin, body.email)));
+    if (body.action === 'sendMyFollowUps') return json(ok(sendMyFollowUps(body.employeeId)));
     if (body.action === 'saveSettings') return json(ok(saveSettings(body.employeeId, body.pin, body.settings || {})));
     if (body.action === 'sendEOD') { sendDailySummary(body.date); return json(ok(true)); }
     return json(fail('Unknown action'));
@@ -175,6 +188,7 @@ function doLogin(employeeId, pin) {
   var emp = getEmployees(true).filter(function (e) { return e.id === String(employeeId); })[0];
   if (!emp || String(emp.pin).trim() !== String(pin).trim()) throw new Error('That PIN doesn’t match. Try again.');
   delete emp.pin;
+  emp.hasEmail = !!String(emp.email || '').trim();
   delete emp.email;
   return emp;
 }
@@ -196,6 +210,8 @@ function saveSettings(employeeId, pin, settings) {
   setSetting('NOTIFY_ON_SUBMIT', String(settings.NOTIFY_ON_SUBMIT) === 'no' ? 'no' : 'yes');
   if (settings.COMPANY_NAME !== undefined) setSetting('COMPANY_NAME', String(settings.COMPANY_NAME).slice(0, 80));
   if (settings.APP_LINK !== undefined) setSetting('APP_LINK', String(settings.APP_LINK).slice(0, 300));
+  if (settings.FOLLOWUP_EMAILS !== undefined) setSetting('FOLLOWUP_EMAILS', String(settings.FOLLOWUP_EMAILS) === 'no' ? 'no' : 'yes');
+  if (settings.FOLLOWUP_DIGEST !== undefined) setSetting('FOLLOWUP_DIGEST', String(settings.FOLLOWUP_DIGEST) === 'yes' ? 'yes' : 'no');
   return getSettings();
 }
 
@@ -354,6 +370,8 @@ function saveRecords(type, records) {
       var start = sh.getLastRow() + 1;
       sh.getRange(start, headers.indexOf('date') + 1, rows.length, 1).setNumberFormat('@');
       sh.getRange(start, phoneIdx + 1, rows.length, 1).setNumberFormat('@');
+      var fuIdx = headers.indexOf('followUp');
+      if (fuIdx !== -1) sh.getRange(start, fuIdx + 1, rows.length, 1).setNumberFormat('@');
       sh.getRange(start, 1, rows.length, headers.length).setValues(rows);
     }
   } finally {
@@ -609,14 +627,19 @@ function renderEmail(o) {
       '<a href="' + esc(link) + '" style="' + FONT + 'display:inline-block;padding:13px 26px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;">Open dashboard &rarr;</a></td></tr></table>';
   }
 
+  return emailShell(o.kicker, o.heading, o.sub, body);
+}
+
+/** Shared frame for every email: dark header with a gold rule, light body. */
+function emailShell(kicker, heading, sub, body) {
   var company = esc(getSetting('COMPANY_NAME') || 'Team');
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>@media only screen and (max-width:520px){.st{display:inline-block!important;width:50%!important;box-sizing:border-box!important}.st-empty{display:none!important}}</style></head><body style="margin:0;padding:0;background:' + C.page + ';">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' + C.page + ';"><tr><td align="center" style="padding:24px 12px;">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;">' +
     '<tr><td style="background:' + C.ever + ';border-radius:16px 16px 0 0;padding:26px 26px 22px;">' +
-    '<div style="' + FONT + 'font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:' + C.gold + ';">' + company + ' &middot; ' + esc(o.kicker) + '</div>' +
-    '<div style="' + FONT + 'font-size:26px;font-weight:800;color:#ffffff;margin-top:8px;line-height:1.2;">' + esc(o.heading) + '</div>' +
-    '<div style="' + FONT + 'font-size:14px;color:#B9CCC7;margin-top:6px;">' + esc(o.sub) + '</div>' +
+    '<div style="' + FONT + 'font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:' + C.gold + ';">' + company + ' &middot; ' + esc(kicker) + '</div>' +
+    '<div style="' + FONT + 'font-size:26px;font-weight:800;color:#ffffff;margin-top:8px;line-height:1.2;">' + esc(heading) + '</div>' +
+    '<div style="' + FONT + 'font-size:14px;color:#B9CCC7;margin-top:6px;">' + esc(sub) + '</div>' +
     '</td></tr>' +
     '<tr><td style="background:' + C.gold + ';height:4px;line-height:4px;font-size:0;">&nbsp;</td></tr>' +
     '<tr><td style="background:' + C.mist + ';padding:16px 14px 26px;border-radius:0 0 16px 16px;">' + body + '</td></tr>' +
@@ -702,3 +725,346 @@ function sendDailySummary(dateStr) {
 
 /** Run from the editor to see the design with today's data */
 function sendTestEmail() { sendDailySummary(); }
+
+// ══════════════════════════════════════════════════════════════
+//  CRM: FOLLOW-UPS
+// ══════════════════════════════════════════════════════════════
+var EDITABLE_FIELDS = ['followUp', 'status', 'remarks'];
+
+/** Change a saved entry (reschedule / close a follow-up). */
+function updateRecord(type, id, fields) {
+  var sh = recordSheet(type);
+  var keys = Object.keys(fields).filter(function (k) { return EDITABLE_FIELDS.indexOf(k) !== -1; });
+  if (!keys.length) throw new Error('Nothing to change');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var headers = ensureHeaders(sh, keys);
+    var last = sh.getLastRow();
+    if (last < 2) throw new Error('Entry not found');
+    var ids = sh.getRange(2, 1, last - 1, 1).getDisplayValues();
+    for (var i = ids.length - 1; i >= 0; i--) {
+      if (ids[i][0] !== id) continue;
+      keys.forEach(function (k) {
+        var cell = sh.getRange(i + 2, headers.indexOf(k) + 1);
+        cell.setNumberFormat('@');
+        cell.setValue(String(fields[k] == null ? '' : fields[k]).slice(0, 500));
+      });
+      return true;
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  throw new Error('Entry not found — it may have been deleted');
+}
+
+function todayIso_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+function addDaysIso_(iso, n) {
+  var p = String(iso).split('-');
+  var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + n);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function followUpOf_(r, today) {
+  var f = String(r.followUp || '').trim();
+  if (f === 'done') return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(f)) return f;
+  // Rows saved before follow-up dates existed: only recent call backs / interviews count
+  if ((r.status === 'callback' || r.status === 'scheduled') && r.date >= addDaysIso_(today, -7)) return addDaysIso_(r.date, 1);
+  return null;
+}
+
+/** Open follow-ups for everyone, grouped by employeeId: the latest call per number, if it still has a follow-up. */
+function openFollowUpsByPerson_() {
+  var today = todayIso_();
+  var from = addDaysIso_(today, -60);
+  var byPerson = {};
+  ['calls', 'hiring'].forEach(function (type) {
+    var latest = {};
+    getRecords(type, from, '', '').forEach(function (r) {
+      var key = r.employeeId + '|' + (r.phone || ('n:' + String(r.name || '').toLowerCase()));
+      var cur = latest[key];
+      if (!cur || r.date > cur.date || (r.date === cur.date && String(r.createdAt) > String(cur.createdAt))) latest[key] = r;
+    });
+    Object.keys(latest).forEach(function (k) {
+      var r = latest[k];
+      var f = followUpOf_(r, today);
+      if (!f) return;
+      r.fu = f; r.type_ = type;
+      (byPerson[r.employeeId] = byPerson[r.employeeId] || []).push(r);
+    });
+  });
+  Object.keys(byPerson).forEach(function (k) { byPerson[k].sort(function (a, b) { return a.fu < b.fu ? -1 : 1; }); });
+  return byPerson;
+}
+
+function whenLabel_(f, today) {
+  var d = String(f).slice(0, 10), t = String(f).slice(11, 16);
+  var p = d.split('-'), q = today.split('-');
+  var diff = Math.round((new Date(p[0], p[1] - 1, p[2]) - new Date(q[0], q[1] - 1, q[2])) / 86400000);
+  var day = diff < 0 ? (diff === -1 ? '1 day late' : (-diff) + ' days late') : diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : niceDate(d).split(',')[0];
+  if (t) {
+    var h = Number(t.slice(0, 2)), m = t.slice(3);
+    day += ' ' + ((h % 12) || 12) + (m !== '00' ? ':' + m : '') + (h < 12 ? ' AM' : ' PM');
+  }
+  return day;
+}
+
+function calendarUrl_(r) {
+  var d = String(r.fu).slice(0, 10).replace(/-/g, ''), t = String(r.fu).slice(11, 16);
+  var dates;
+  if (t) {
+    var h = Number(t.slice(0, 2)), m = Number(t.slice(3)) + 15;
+    if (m >= 60) { h += 1; m -= 60; }
+    dates = d + 'T' + t.replace(':', '') + '00/' + d + 'T' + ('0' + h).slice(-2) + ('0' + m).slice(-2) + '00';
+  } else {
+    dates = d + '/' + addDaysIso_(String(r.fu).slice(0, 10), 1).replace(/-/g, '');
+  }
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent('Follow up: ' + (r.name || r.phone)) +
+    '&dates=' + dates + '&details=' + encodeURIComponent((r.phone ? 'Call ' + r.phone + '\n' : '') + (r.remarks ? 'Last note: ' + r.remarks : ''));
+}
+
+function fuCard_(r, today, showBy) {
+  var late = String(r.fu).slice(0, 10) < today;
+  var color = late ? C.bad : C.blue;
+  var links = [];
+  if (r.phone) {
+    links.push('<a href="tel:' + esc(r.phone) + '" style="color:' + C.ever + ';font-weight:700;text-decoration:none;">&#128222; ' + esc(r.phone) + '</a>');
+    links.push('<a href="https://wa.me/91' + esc(String(r.phone).slice(-10)) + '" style="color:#1F8A5B;font-weight:700;text-decoration:none;">WhatsApp</a>');
+  }
+  links.push('<a href="' + esc(calendarUrl_(r)) + '" style="color:' + C.blue + ';font-weight:700;text-decoration:none;">+ Calendar</a>');
+  return '<tr><td style="padding:0 0 8px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid ' + C.line + ';border-left:4px solid ' + color + ';border-radius:10px;">' +
+    '<tr><td style="padding:11px 14px;' + FONT + '">' +
+    '<div style="' + FONT + 'font-size:15px;font-weight:700;color:' + C.ink + ';">' + esc(r.name || 'No name') +
+    (r.title ? ' <span style="font-size:11px;font-weight:800;color:#87540a;background:#FDF0DB;border-radius:5px;padding:2px 7px;">' + esc(r.title) + '</span>' : '') +
+    ' <span style="font-size:12px;font-weight:800;color:' + color + ';">&middot; ' + esc(whenLabel_(r.fu, today)) + '</span></div>' +
+    (r.remarks ? '<div style="' + FONT + 'font-size:14px;color:' + C.ink + ';margin-top:4px;line-height:1.45;">' + esc(r.remarks) + '</div>' : '') +
+    (showBy ? '<div style="' + FONT + 'font-size:12px;color:' + C.muted + ';margin-top:4px;">' + esc(r.employee) + '</div>' : '') +
+    '<div style="' + FONT + 'font-size:13px;margin-top:6px;">' + links.join(' &nbsp;&middot;&nbsp; ') + '</div>' +
+    '</td></tr></table></td></tr>';
+}
+
+function fuList_(items, today, showBy, limit) {
+  var html = items.slice(0, limit).map(function (r) { return fuCard_(r, today, showBy); }).join('');
+  if (items.length > limit) html += '<tr><td style="' + FONT + 'font-size:13px;color:' + C.muted + ';padding:4px 0;">+ ' + (items.length - limit) + ' more in the app</td></tr>';
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">' + html + '</table>';
+}
+
+function appButton_(label) {
+  var link = getSetting('APP_LINK');
+  if (!link) return '';
+  return '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px auto 4px;"><tr><td style="background:' + C.ever + ';border-radius:10px;">' +
+    '<a href="' + esc(link) + '" style="' + FONT + 'display:inline-block;padding:13px 26px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;">' + label + ' &rarr;</a></td></tr></table>';
+}
+
+function personFollowUpEmail_(emp, items, today) {
+  var overdue = items.filter(function (r) { return String(r.fu).slice(0, 10) < today; });
+  var dueToday = items.filter(function (r) { return String(r.fu).slice(0, 10) === today; });
+  var upcoming = items.filter(function (r) { var d = String(r.fu).slice(0, 10); return d > today && d <= addDaysIso_(today, 3); });
+  var body = statGrid([statCell('Due today', dueToday.length, C.blue), statCell('Overdue', overdue.length, overdue.length ? C.bad : C.ink), statCell('Next 3 days', upcoming.length)]);
+  if (overdue.length) body += sectionTitle('Overdue', overdue.length, C.bad, '#FBE7E5') + fuList_(overdue, today, false, 40);
+  body += sectionTitle('Today', dueToday.length, C.blue, C.blueBg) + (dueToday.length ? fuList_(dueToday, today, false, 60) : emptyNote('Nothing scheduled for today.'));
+  if (upcoming.length) body += sectionTitle('Coming up', upcoming.length, C.muted, C.mist) + fuList_(upcoming, today, false, 20);
+  body += appButton_('Open my follow-ups');
+  var first = String(emp.name || '').split(' ')[0];
+  return {
+    subject: 'Your follow-ups · ' + today + ' · ' + dueToday.length + ' today' + (overdue.length ? ' · ' + overdue.length + ' overdue' : ''),
+    html: emailShell('Follow-up reminder', 'Good morning, ' + first, niceDate(today) + ' — call these today. Tap a number to dial.', body)
+  };
+}
+
+/** Morning trigger: each person gets their follow-ups; management optionally gets the overdue list. */
+function sendFollowUpReminders() {
+  var today = todayIso_();
+  var p = today.split('-');
+  if (new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getDay() === 0) return; // Sunday off
+  var byPerson = openFollowUpsByPerson_();
+  var staff = getEmployees(true).filter(function (e) { return String(e.viewOnly).toLowerCase() !== 'yes'; });
+  var sender = (getSetting('COMPANY_NAME') || 'Team') + ' Follow-ups';
+
+  if (String(getSetting('FOLLOWUP_EMAILS') || 'yes').toLowerCase() !== 'no') {
+    staff.forEach(function (e) {
+      var mail = String(e.email || '').trim();
+      if (!mail) return;
+      var items = (byPerson[e.id] || []).filter(function (r) { return String(r.fu).slice(0, 10) <= addDaysIso_(today, 3); });
+      if (!items.some(function (r) { return String(r.fu).slice(0, 10) <= today; })) return; // nothing due → no email
+      var m = personFollowUpEmail_(e, items, today);
+      try { MailApp.sendEmail({ to: mail, subject: m.subject, htmlBody: m.html, name: sender }); } catch (err) { console.error(err); }
+    });
+  }
+
+  if (String(getSetting('FOLLOWUP_DIGEST')).toLowerCase() === 'yes') {
+    var overdueAll = [];
+    staff.forEach(function (e) { (byPerson[e.id] || []).forEach(function (r) { if (String(r.fu).slice(0, 10) < today) overdueAll.push(r); }); });
+    if (!overdueAll.length) return;
+    var rows = staff.map(function (e) {
+      var mine = byPerson[e.id] || [];
+      var late = mine.filter(function (r) { return String(r.fu).slice(0, 10) < today; }).length;
+      var due = mine.filter(function (r) { return String(r.fu).slice(0, 10) === today; }).length;
+      return { name: e.name, done: late === 0, line: due + ' due today · ' + late + ' overdue' };
+    });
+    var body = sectionTitle('Overdue follow-ups', overdueAll.length, C.bad, '#FBE7E5') + fuList_(overdueAll, today, true, 80);
+    body += sectionTitle('By person', staff.length, C.ever, C.mist) +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid ' + C.line + ';border-radius:10px;">' +
+      rows.map(function (t, i) {
+        var bt = i ? 'border-top:1px solid ' + C.line + ';' : '';
+        return '<tr><td style="' + FONT + 'padding:10px 14px;font-size:14px;font-weight:700;color:' + C.ink + ';' + bt + '">' + esc(t.name) + '</td>' +
+          '<td align="right" style="' + FONT + 'padding:10px 14px;font-size:13px;' + bt + 'color:' + (t.done ? C.good : C.bad) + ';">' + esc(t.line) + '</td></tr>';
+      }).join('') + '</table>' + appButton_('Open dashboard');
+    MailApp.sendEmail({
+      to: managementEmails().join(','),
+      subject: 'Overdue follow-ups · ' + today + ' · ' + overdueAll.length,
+      htmlBody: emailShell('Follow-up check', overdueAll.length + ' overdue follow-ups', niceDate(today), body),
+      name: sender
+    });
+  }
+}
+
+/** "Email me the list" button, and the test button on the Contacts page. */
+function sendMyFollowUps(employeeId) {
+  var emp = getEmployees(true).filter(function (e) { return e.id === String(employeeId); })[0];
+  if (!emp) throw new Error('Employee not found');
+  var mail = String(emp.email || '').trim();
+  if (!mail) throw new Error('Add your reminder email first: Contacts page → Morning reminder email.');
+  var today = todayIso_();
+  var items = (openFollowUpsByPerson_()[emp.id] || []).filter(function (r) { return String(r.fu).slice(0, 10) <= addDaysIso_(today, 3); });
+  var m = personFollowUpEmail_(emp, items, today);
+  MailApp.sendEmail({ to: mail, subject: m.subject, htmlBody: m.html, name: (getSetting('COMPANY_NAME') || 'Team') + ' Follow-ups' });
+  return true;
+}
+
+function saveMyEmail(employeeId, pin, email) {
+  doLogin(employeeId, pin);
+  email = String(email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Not a valid email: ' + email);
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_EMPLOYEES);
+  var headers = ensureHeaders(sh, ['email']);
+  var ids = sh.getRange(2, headers.indexOf('id') + 1, sh.getLastRow() - 1, 1).getDisplayValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === String(employeeId)) { sh.getRange(i + 2, headers.indexOf('email') + 1).setValue(email); return true; }
+  }
+  throw new Error('Employee not found');
+}
+
+// Run once: follow-up reminder emails every morning at ~9 AM
+function createFollowUpTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendFollowUpReminders') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('sendFollowUpReminders').timeBased().everyDays(1).atHour(9).create();
+}
+
+/** Run from the editor to send today's reminder emails now. */
+function sendTestFollowUps() { sendFollowUpReminders(); }
+
+// ══════════════════════════════════════════════════════════════
+//  ENGLISH BUTTON: Thanglish / rough notes → clear English
+// ══════════════════════════════════════════════════════════════
+var POLISH_PROMPT = 'You clean up short work notes typed by telecallers and HR staff at a company in Chennai, India. ' +
+  'Notes may be Thanglish (Tamil written in English letters), Tamil script, or rough English with spelling mistakes. ' +
+  'Rewrite each note as short, clear, correct English that a manager can read quickly. ' +
+  'Keep every fact: names, phone numbers, amounts, products, quantities, dates and times. ' +
+  'Keep about the same length. Do not add details, greetings or explanations. ' +
+  'If a note is already good English, only fix spelling and grammar. ' +
+  'Reply with only a JSON array of strings, one per input note, in the same order.';
+
+function polishTexts(texts) {
+  texts = (texts || []).slice(0, 60).map(function (t) { return String(t == null ? '' : t).slice(0, 1000); });
+  var props = PropertiesService.getScriptProperties();
+  var cache = CacheService.getScriptCache();
+  var out = [], todo = [];
+  texts.forEach(function (t, i) {
+    if (!t.trim()) { out[i] = t; return; }
+    var key = 'pl_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, t, Utilities.Charset.UTF_8));
+    var hit = cache.get(key);
+    if (hit !== null) out[i] = hit; else todo.push({ i: i, t: t, key: key });
+  });
+  var engine = 'cache';
+  if (todo.length) {
+    var results = null;
+    var claudeKey = props.getProperty('ANTHROPIC_API_KEY'), geminiKey = props.getProperty('GEMINI_API_KEY');
+    try {
+      if (claudeKey) { results = polishWithClaude_(todo.map(function (x) { return x.t; }), claudeKey, props.getProperty('CLAUDE_MODEL')); engine = 'claude'; }
+      else if (geminiKey) { results = polishWithGemini_(todo.map(function (x) { return x.t; }), geminiKey, props.getProperty('GEMINI_MODEL')); engine = 'gemini'; }
+    } catch (err) { console.error('AI polish failed: ' + err); results = null; }
+    if (!results || results.length !== todo.length) { results = todo.map(function (x) { return polishBasic_(x.t); }); engine = 'basic'; }
+    todo.forEach(function (x, j) {
+      var r = String(results[j] == null ? '' : results[j]).trim() || x.t;
+      out[x.i] = r;
+      if (engine !== 'basic') cache.put(x.key, r, 21600);
+    });
+  }
+  return { texts: out, engine: engine };
+}
+
+function jsonArrayFrom_(text) {
+  var m = String(text || '').match(/\[[\s\S]*\]/);
+  if (!m) throw new Error('No JSON array in reply');
+  var arr = JSON.parse(m[0]);
+  if (!Array.isArray(arr)) throw new Error('Reply is not an array');
+  return arr;
+}
+
+function polishWithClaude_(texts, key, model) {
+  var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    payload: JSON.stringify({
+      model: model || 'claude-haiku-4-5-20251001', max_tokens: 4000, system: POLISH_PROMPT,
+      messages: [{ role: 'user', content: JSON.stringify(texts) }]
+    })
+  });
+  if (res.getResponseCode() !== 200) throw new Error('Claude ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  var data = JSON.parse(res.getContentText());
+  return jsonArrayFrom_((data.content || []).map(function (c) { return c.text || ''; }).join(''));
+}
+
+function polishWithGemini_(texts, key, model) {
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + (model || 'gemini-2.5-flash') + ':generateContent?key=' + encodeURIComponent(key);
+  var res = UrlFetchApp.fetch(url, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({
+      systemInstruction: { parts: [{ text: POLISH_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: JSON.stringify(texts) }] }],
+      generationConfig: { temperature: 0.2, responseMimeType: 'application/json' }
+    })
+  });
+  if (res.getResponseCode() !== 200) throw new Error('Gemini ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  var data = JSON.parse(res.getContentText());
+  var parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
+  return jsonArrayFrom_(parts.map(function (p) { return p.text || ''; }).join(''));
+}
+
+/** Run from the editor to check the English button works with your key. */
+function testPolish() {
+  console.log(JSON.stringify(polishTexts(['naalaiku saayangalam 5 mani call pannunga, price list anupunga', 'interest illa, rate jaasthi nu sonnanga'])));
+}
+
+// No AI key: Tamil script → Google Translate; Thanglish → common-word list
+var THANGLISH_PHRASES = [
+  [/\binterest(?:ed)? illa(?:i)?\b|\bintrest illa\b/g, 'not interested'], [/\b(?:thevai|theva) illa(?:i)?\b/g, 'not needed'],
+  [/\b(?:phone |call )?(?:edukala|edukkala|eduthala|edukalai)\b/g, 'did not pick up'], [/\breach a+gala\b/g, 'not reachable'],
+  [/\bcall (?:pannunga|panunga|pannu|pannanum)\b/g, 'call'], [/\border (?:podrom|poduvom|poduvanga|poduvaru)\b/g, 'will place an order'],
+  [/\bjoin (?:pannitaru|pannitanga|panitaru|panitanga)\b/g, 'has joined'], [/\binterview(?: ku)? (?:varuvanga|varuvaanga|varuvaru)\b/g, 'will come for the interview'],
+  [/\b(?:yosichu|yosithu) solren\b|\byosikiren\b/g, 'will think and let us know']
+];
+var THANGLISH_WORDS = {
+  venum: 'wants', venam: "doesn't want", venaam: "doesn't want", vendam: "doesn't want", illa: 'no', illai: 'no',
+  naalaiku: 'tomorrow', nalaiku: 'tomorrow', naalaikku: 'tomorrow', inniku: 'today', indru: 'today',
+  aprom: 'later', apram: 'later', apparam: 'later', saayangalam: 'evening', sayangalam: 'evening', kaalaila: 'in the morning',
+  mani: "o'clock", vaaram: 'week', adutha: 'next', ippo: 'now', sonnanga: 'said', sonnaru: 'said', sollunga: 'please tell',
+  pesinen: 'spoke', pesalam: "let's talk", anupunga: 'send', anuppunga: 'send', varuvanga: 'will come', varala: 'did not come',
+  pakalam: "we'll see", rate: 'price', vilai: 'price', kammi: 'low', jaasthi: 'high', kandippa: 'definitely', romba: 'very',
+  avanga: 'they', avaru: 'he', aachu: 'done', kettanga: 'asked', kadai: 'shop', ennai: 'oil', arisi: 'rice'
+};
+function polishBasic_(t) {
+  if (/[\u0B80-\u0BFF]/.test(t)) { try { return LanguageApp.translate(t, 'ta', 'en'); } catch (e) { /* fall through */ } }
+  var s = ' ' + String(t).toLowerCase() + ' ';
+  THANGLISH_PHRASES.forEach(function (p) { s = s.replace(p[0], p[1]); });
+  s = s.replace(/\b[a-z']+\b/g, function (w) { return THANGLISH_WORDS[w] || w; })
+    .replace(/\s+(ah|ha|la|nu|um|dhan|than|ku|kku)\b/g, '').replace(/\s+/g, ' ').replace(/\bi\b/g, 'I').trim();
+  if (!s) return t;
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return /[.!?]$/.test(s) ? s : s + '.';
+}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings } from 'lucide-react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings, Users } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
 import MyReports from './pages/MyReports';
@@ -7,6 +7,7 @@ import TeamDashboard from './pages/TeamDashboard';
 import ReportsCenter from './pages/ReportsCenter';
 import RecordsPage from './pages/RecordsPage';
 import SettingsPage from './pages/SettingsPage';
+import ContactsPage from './pages/ContactsPage';
 import { Avatar, Toast } from './components/ui';
 import { fetchEmployees, IS_DEMO } from './lib/api';
 
@@ -29,6 +30,7 @@ export default function App() {
   const [employees, setEmployees] = useState([]);
   const [page, setPage] = useState(null);
   const [toast, setToast] = useState(null);
+  const [due, setDue] = useState(0);
 
   const notify = useCallback((message, type = 'ok') => setToast({ message, type, id: Date.now() }), []);
   const clearToast = useCallback(() => setToast(null), []);
@@ -40,6 +42,8 @@ export default function App() {
   useEffect(() => {
     if (user && !page) setPage(user.viewOnly ? 'team' : 'today');
   }, [user, page]);
+
+  useEffect(() => { window.scrollTo(0, 0); }, [page]);
 
   const handleLogin = (u) => {
     localStorage.setItem(SESSION_KEY, JSON.stringify(u));
@@ -63,6 +67,7 @@ export default function App() {
 
   const nav = [
     !user.viewOnly && { key: 'today', label: 'Today’s report', short: 'Today', icon: CalendarCheck2 },
+    (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'contacts', label: 'Contacts & follow-ups', short: 'CRM', icon: Users },
     !user.viewOnly && { key: 'history', label: 'My reports', short: 'Mine', icon: History },
     user.isAdmin && { key: 'team', label: 'Team dashboard', short: 'Team', icon: LayoutDashboard },
     (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'records', label: 'Call data', short: 'Data', icon: Contact },
@@ -80,6 +85,7 @@ export default function App() {
           {nav.map((n) => (
             <button key={n.key} className={`nav-item ${page === n.key ? 'active' : ''}`} onClick={() => setPage(n.key)} aria-current={page === n.key ? 'page' : undefined}>
               <n.icon size={19} /> {n.label}
+              {n.key === 'today' && due > 0 && <span className="nav-badge">{due}</span>}
             </button>
           ))}
         </nav>
@@ -102,7 +108,8 @@ export default function App() {
         </header>
         {IS_DEMO && <div className="demo-banner">Demo mode — reports are saved in this browser only. Add your Google Sheet link to go live.</div>}
 
-        {page === 'today' && <DailyEntry {...props} />}
+        {page === 'today' && <DailyEntry {...props} onDue={setDue} />}
+        {page === 'contacts' && <ContactsPage {...props} />}
         {page === 'history' && <MyReports {...props} />}
         {page === 'team' && <TeamDashboard {...props} />}
         {page === 'reports' && <ReportsCenter {...props} />}
@@ -113,7 +120,7 @@ export default function App() {
       <nav className="tabbar" aria-label="Main">
         {nav.filter((n) => !n.desktopOnly).map((n) => (
           <button key={n.key} className={`tab ${page === n.key ? 'active' : ''}`} onClick={() => setPage(n.key)}>
-            <n.icon size={20} /> {n.short}
+            <span className="tab-icon"><n.icon size={20} />{n.key === 'today' && due > 0 && <span className="nav-badge">{due > 99 ? '99+' : due}</span>}</span> {n.short}
           </button>
         ))}
       </nav>

@@ -3,6 +3,7 @@
 //  into clean records. Works with or without a header row.
 // ─────────────────────────────────────────────────────────────
 import { RECORD_TYPES } from '../config/team';
+import { followUpFor } from './followup';
 
 const PHONE_RE = /(?:\+?91[\s-]?)?(?:0)?[6-9]\d{2}[\s-]?\d{2}[\s-]?\d{5}\b|(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b|\b\d{10}\b/;
 const QTY_RE = /(\d+(?:\.\d+)?)\s*(kgs?|kilo(?:gram)?s?|kilograms?|gms?|grams?|g|ltrs?|litres?|liters?|lit|lts?|l|ml|pcs|nos|bags?|box(?:es)?|tins?|packets?|pkts?|cans?|bottles?)\b/i;
@@ -56,6 +57,12 @@ export function classifyCall(text) {
   const t = String(text || '').toLowerCase();
   if (!t.trim()) return 'other';
   if (/(not|no|n'?t|dont|don't)\s*(interest|need|required|want|intrest)|wrong number|don'?t call|declin|reject|already (have|buying|using)/.test(t)) return 'not_interested';
+  // Thanglish: "interest illa", "venam", "thevai illa"
+  if (/\b(venam|venaam|vendam|vendaam)\b|(interest|intrest|thevai|theva)\s*illa/.test(t)) return 'not_interested';
+  if (/edukala|edukkala|eduthala|edukalai|reach aagala|reach agala/.test(t)) return 'no_answer';
+  if (/yosi|pakalam|paakalam|aprom|apram|apparam/.test(t)) return 'callback';
+  if (/\bvenum\b|order pod|order poduv|anupunga|anuppunga|ok nu|rate kett|sample venum/.test(t)) return 'interested';
+  if (/naalaiku|nalaiku|naalaikku|nalaikku|nalaki|saayangalam|sayangalam|call pannunga|kupdunga|koopdunga/.test(t)) return 'callback';
   if (/no answer|not answer|didn'?t pick|not pick|no response|not reachable|unreachable|switch(ed)?\s?off|\bbusy\b|\brnr\b|ringing|not lifting|out of coverage|not connected/.test(t)) return 'no_answer';
   if (/will (think|confirm|let|decide|check|discuss)|call after|call later/.test(t)) return 'callback';
   if (/interest|intrest|positive|order|confirm|\bok\b|okay|agreed|price list|quotation|sample|catalog|will buy|ready to|want|\bhot\b|need/.test(t)) return 'interested';
@@ -66,6 +73,10 @@ export function classifyCall(text) {
 export function classifyHiring(text) {
   const t = String(text || '').toLowerCase();
   if (/reliev|resign|left (the )?job|quit|terminat|abscond/.test(t)) return 'relieved';
+  if (/join (pannitaru|pannitanga|panitaru|panitanga|aagitaru|agitaru)/.test(t)) return 'joined';
+  if (/\b(venam|venaam|vendam|varala|varla)\b|interest\s*illa/.test(t)) return 'not_interested';
+  if (/edukala|edukkala|eduthala|reach aagala/.test(t)) return 'no_answer';
+  if (/varuvanga|varuvaanga|varuvaru|varuvaar|interview ku/.test(t)) return 'scheduled';
   if (/driver.*arrang|arrang.*driver/.test(t)) return 'driver_arranged';
   if (/(not|no|n'?t)\s*(interest|intrest|willing|ok|okay|coming)|reject|declin|salary (issue|not ok)/.test(t)) return 'not_interested';
   if (/\bjoin(ed|ing)?\b|reported/.test(t)) return 'joined';
@@ -208,6 +219,12 @@ export function parseBulk(type, input) {
     : rows.map((cells) => fromLine(type, cells.join('\t')));
 
   return out.filter((r) => r.name || r.phone);
+}
+
+/** Adds a follow-up date to imported calls / HR calls (from the remarks, or the default gap). */
+export function withFollowUps(type, rows, baseISO) {
+  if (type !== 'calls' && type !== 'hiring') return rows;
+  return rows.map((r) => ({ ...r, followUp: r.followUp || followUpFor(r.status, r.remarks, baseISO) }));
 }
 
 export async function readSheetFile(file) {

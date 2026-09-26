@@ -1,14 +1,16 @@
 import { DEFAULT_EMPLOYEES, RECORD_TYPES } from '../config/team';
 import { toISO, addDays } from './date';
 import { classifyCall, classifyHiring } from './parse';
+import { basicPolish } from './thanglish';
+import { followUpFor } from './followup';
 
 // Live Google Apps Script web app. A VITE_SHEETS_API_URL in .env overrides it.
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbyYYSyTpNk0hww76a-MR3lPJk2FLw8wP5vs8sUEB0JuX-oXlauKaCPNq-4uOC5V-Xnhgg/exec';
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
-const LS_REPORTS = 'pulse_demo_reports_v3';
-const LS_RECORDS = 'pulse_demo_records_v3';
+const LS_REPORTS = 'pulse_demo_reports_v4';
+const LS_RECORDS = 'pulse_demo_records_v4';
 const LS_SETTINGS = 'pulse_demo_settings_v1';
 export const TYPE_KEYS = Object.keys(RECORD_TYPES);
 
@@ -80,7 +82,8 @@ function seedDemo() {
       if (emp.roles.includes('telecaller')) {
         for (let c = 0; c < rnd(12, 30); c++) {
           const remarks = pick(CALL_REMARKS);
-          records.push({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: classifyCall(remarks) });
+          const st = classifyCall(remarks);
+          records.push({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done' });
         }
         for (let o = 0; o < rnd(1, 5); o++) {
           const [product, unit, price] = pick(PRODUCTS);
@@ -96,7 +99,8 @@ function seedDemo() {
       if (emp.roles.includes('hiring')) {
         for (let c = 0; c < rnd(6, 16); c++) {
           const remarks = pick(HR_REMARKS);
-          records.push({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: classifyHiring(remarks) });
+          const st = classifyHiring(remarks);
+          records.push({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done' });
         }
       }
       reports.push({
@@ -193,7 +197,8 @@ export async function saveRecords(type, rows, { date, employeeId, employee }) {
     lsSet(LS_RECORDS, [...next, ...records.map((r) => ({ ...r, type_: type }))]);
     return records;
   }
-  return post({ action: 'saveRecords', type, records });
+  await post({ action: 'saveRecords', type, records });
+  return records;
 }
 
 export async function deleteRecord(type, id) {
@@ -205,11 +210,43 @@ export async function deleteRecord(type, id) {
   return post({ action: 'deleteRecord', type, id });
 }
 
+/** Change a saved entry — used to reschedule or close a follow-up. Only followUp, status and remarks can change. */
+export async function updateRecord(type, id, fields) {
+  if (IS_DEMO) {
+    const { records } = demoData();
+    lsSet(LS_RECORDS, records.map((r) => (r.id === id ? { ...r, ...fields } : r)));
+    return true;
+  }
+  return post({ action: 'updateRecord', type, id, fields });
+}
+
+/**
+ * Thanglish / rough notes → clear English. Returns { texts, engine }.
+ * engine: 'claude' | 'gemini' (AI on the server), 'basic' (word list only), 'cache'.
+ */
+export async function polishTexts(texts) {
+  if (IS_DEMO) return { texts: texts.map(basicPolish), engine: 'basic' };
+  return post({ action: 'polish', texts });
+}
+
+/** Lets someone set the email their follow-up reminders go to (PIN checked on the server). */
+export async function saveMyEmail(employeeId, pin, email) {
+  if (IS_DEMO) throw new Error('Connect Google Sheets to use email reminders.');
+  return post({ action: 'saveMyEmail', employeeId, pin, email });
+}
+
+export async function emailMyFollowUps(employeeId) {
+  if (IS_DEMO) throw new Error('Connect Google Sheets to send reminder emails.');
+  return post({ action: 'sendMyFollowUps', employeeId });
+}
+
 export const DEFAULT_SETTINGS = {
   MANAGEMENT_EMAILS: 'hiring.sridhiventures@gmail.com',
   NOTIFY_ON_SUBMIT: 'yes',
   COMPANY_NAME: 'Sridhi Ventures',
-  APP_LINK: ''
+  APP_LINK: '',
+  FOLLOWUP_EMAILS: 'yes',
+  FOLLOWUP_DIGEST: 'no'
 };
 
 export async function fetchSettings() {

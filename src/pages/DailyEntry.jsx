@@ -4,7 +4,9 @@ import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT } from '../config/team';
 import { ROLE_ICONS, Loading, Segmented } from '../components/ui';
 import { BulkImport, RecordTable } from '../components/Records';
 import QuickLog from '../components/QuickLog';
-import FollowUps, { dueFollowUps } from '../components/FollowUps';
+import FollowUps from '../components/FollowUps';
+import PolishButton from '../components/PolishButton';
+import { openFollowUps, bucketOf } from '../lib/followup';
 import VoiceButton from '../components/VoiceButton';
 import { fetchReports, saveReport, fetchRecords, deleteRecord } from '../lib/api';
 import { eodText } from '../lib/reports';
@@ -114,7 +116,7 @@ function RoleRecords({ roleKey, dayRecs, date, user, onImport, onDelete, onAdded
   );
 }
 
-export default function DailyEntry({ user, notify }) {
+export default function DailyEntry({ user, notify, onDue }) {
   const [date, setDate] = useState(todayISO());
   const [history, setHistory] = useState(null);
   const [records, setRecords] = useState(null);
@@ -136,8 +138,8 @@ export default function DailyEntry({ user, notify }) {
 
   const loadRecords = useCallback(() => {
     if (!hasImports) { setRecords({}); return; }
-    // The last 7 days are loaded too, so open call backs and interviews show up as follow-ups
-    fetchRecords({ employeeId: user.id, from: toISO(addDays(fromISO(date), -7)), to: date })
+    // The last 45 days are loaded too, so open follow-ups show up (reports only use this day's entries)
+    fetchRecords({ employeeId: user.id, from: toISO(addDays(fromISO(date), -45)), to: date })
       .then(setRecords)
       .catch((e) => { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); });
   }, [user.id, date, hasImports, notify]);
@@ -171,13 +173,17 @@ export default function DailyEntry({ user, notify }) {
 
   // What you planned yesterday, shown as a reminder while writing today's wins
   const lastPlan = useMemo(() => (history || []).find((r) => r.date < date && r.tomorrow?.trim())?.tomorrow, [history, date]);
-  const followUps = useMemo(() => (records && date === todayISO() ? dueFollowUps(records, date, user.roles.flatMap((r) => ROLES[r]?.imports || [])) : []), [records, date, user.roles]);
+  const followUps = useMemo(() => (records && date === todayISO() ? openFollowUps(records) : []), [records, date]);
+  useEffect(() => {
+    if (records && date === todayISO()) onDue?.(followUps.filter((r) => bucketOf(r.fu) !== 'upcoming').length);
+  }, [followUps, records, date, onDue]);
 
   const addLocal = useCallback((type, recs) => setRecords((all) => {
     let list = all?.[type] || [];
     if (type === 'customers') { const phones = new Set(recs.map((r) => r.phone).filter(Boolean)); list = list.filter((r) => !phones.has(r.phone)); }
     return { ...all, [type]: [...recs, ...list] };
   }), []);
+  const updateLocal = useCallback((type, id, fields) => setRecords((all) => ({ ...all, [type]: (all?.[type] || []).map((r) => (r.id === id ? { ...r, ...fields } : r)) })), []);
   const removeLocal = useCallback((type, id) => setRecords((all) => ({ ...all, [type]: (all?.[type] || []).filter((r) => r.id !== id) })), []);
 
   const streak = useMemo(() => calcStreak((history || []).map((r) => r.date)), [history]);
@@ -246,7 +252,7 @@ export default function DailyEntry({ user, notify }) {
         </div>
       </section>
 
-      <FollowUps items={followUps} date={date} user={user} onAdded={addLocal} notify={notify} />
+      <FollowUps items={followUps} date={date} user={user} onAdded={addLocal} onUpdated={updateLocal} notify={notify} />
 
       {user.roles.map((roleKey) => {
         const role = ROLES[roleKey];
@@ -271,7 +277,10 @@ export default function DailyEntry({ user, notify }) {
                 <div key={f.key} style={{ marginTop: role.imports.length ? 16 : 0, marginBottom: 12 }}>
                   <div className="label-row">
                     <label className="label" htmlFor={f.key}>{f.label}</label>
-                    <VoiceButton onText={(t) => setNote(f.key, `${form.notes[f.key] ? `${form.notes[f.key]} ` : ''}${t}`)} />
+                    <span className="label-tools">
+                      <VoiceButton onText={(t) => setNote(f.key, `${form.notes[f.key] ? `${form.notes[f.key]} ` : ''}${t}`)} />
+                      <PolishButton value={form.notes[f.key] || ''} onChange={(t) => setNote(f.key, t)} notify={notify} />
+                    </span>
                   </div>
                   <textarea id={f.key} className="textarea" rows={f.rows || 3} placeholder={f.placeholder} value={form.notes[f.key] || ''} onChange={(e) => setNote(f.key, e.target.value)} />
                 </div>
@@ -307,7 +316,10 @@ export default function DailyEntry({ user, notify }) {
                 <div key={f.key}>
                   <div className="label-row">
                     <label className="label" htmlFor={f.key}>{f.label}</label>
-                    <VoiceButton onText={(t) => setForm((x) => ({ ...x, [f.key]: `${x[f.key] ? `${x[f.key]} ` : ''}${t}` }))} />
+                    <span className="label-tools">
+                      <VoiceButton onText={(t) => setForm((x) => ({ ...x, [f.key]: `${x[f.key] ? `${x[f.key]} ` : ''}${t}` }))} />
+                      <PolishButton value={form[f.key]} onChange={(t) => setForm((x) => ({ ...x, [f.key]: t }))} notify={notify} />
+                    </span>
                   </div>
                   <textarea id={f.key} className="textarea" rows={2} placeholder={f.ph} value={form[f.key]} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} />
                 </div>

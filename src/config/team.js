@@ -31,7 +31,7 @@ export const CUSTOMER_TYPES = [
 export const RECORD_TYPES = {
   calls: {
     label: 'Customer calls', short: 'Calls', noun: 'calls', verb: 'Import calls',
-    cols: ['title', 'name', 'phone', 'remarks', 'status'],
+    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'],
     statuses: CALL_STATUSES,
     titleHint: 'What is this call list for?',
     titles: ['Sales', 'Distributor hiring', 'Retail follow-up', 'New leads'],
@@ -61,7 +61,7 @@ export const RECORD_TYPES = {
   },
   hiring: {
     label: 'Hiring calls', short: 'HR calls', noun: 'HR calls', verb: 'Import HR calls',
-    cols: ['title', 'name', 'phone', 'remarks', 'status'],
+    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'],
     statuses: HIRING_STATUSES,
     titleHint: 'Which position are you hiring for?',
     titles: ['Driver', 'Call driver', 'Telecaller', 'Delivery boy', 'Distributor'],
@@ -71,7 +71,7 @@ export const RECORD_TYPES = {
 
 export const COL_LABELS = {
   title: 'Title', name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
-  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position'
+  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position', followUp: 'Follow-up'
 };
 
 export const ROLES = {

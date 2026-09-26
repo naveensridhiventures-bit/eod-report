@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react';
-import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag } from 'lucide-react';
+import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag, Sparkles } from 'lucide-react';
 import { RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
-import { parseBulk, readSheetFile } from '../lib/parse';
+import { parseBulk, readSheetFile, withFollowUps } from '../lib/parse';
+import { whenLabel, fuDate } from '../lib/followup';
+import { polishTexts } from '../lib/api';
 import { saveRecords } from '../lib/api';
 import { fmtDate } from '../lib/date';
 import { inr } from '../lib/format';
@@ -19,6 +21,7 @@ function cellValue(type, col, r) {
   if (col === 'title') return r.title ? <span className="title-tag">{r.title}</span> : '';
   if (col === 'amount') return r.amount ? inr(r.amount) : '';
   if (col === 'qty') return r.qty ? fmtQty(r.qty) : '';
+  if (col === 'followUp') return !r.followUp ? '' : r.followUp === 'done' ? <span className="muted">Closed</span> : <span className={fuDate(r.followUp) < new Date().toISOString().slice(0, 10) ? 'fu-late' : ''}>{whenLabel(r.followUp)}</span>;
   return r[col] || '';
 }
 
@@ -99,7 +102,19 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
     titleRef.current?.focus();
     return true;
   };
-  const stamp = (parsed) => parsed.map((r) => ({ ...r, title: r.title || title.trim() }));
+  const stamp = (parsed) => withFollowUps(type, parsed.map((r) => ({ ...r, title: r.title || title.trim() })), date);
+  const [polishing, setPolishing] = useState(false);
+  const hasRemarks = rows?.some((r) => String(r.remarks || r.reason || '').trim());
+  const polishAll = async () => {
+    const key = type === 'cancellations' ? 'reason' : 'remarks';
+    setPolishing(true);
+    try {
+      const res = await polishTexts(rows.map((r) => String(r[key] || '')));
+      setRows((rs) => rs.map((r, i) => ({ ...r, [key]: res.texts[i] ?? r[key] })));
+      notify(res.engine === 'basic' ? 'Converted with the basic word list. Add an AI key on the server for full sentences.' : 'Remarks converted to English');
+    } catch (e) { notify(`Couldn’t convert: ${e.message}`, 'error'); }
+    finally { setPolishing(false); }
+  };
 
   const read = (src = text) => {
     if (needTitle()) return;
@@ -224,7 +239,10 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
               </table>
             </div>
             <div className="bi-actions">
-              <button className="btn btn-ghost" onClick={() => setRows(null)}><ArrowLeft size={17} /> Edit pasted text</button>
+              <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost" onClick={() => setRows(null)}><ArrowLeft size={17} /> Edit pasted text</button>
+                {hasRemarks && <button className="btn btn-ghost" onClick={polishAll} disabled={polishing}>{polishing ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />} Convert remarks to English</button>}
+              </span>
               <button className="btn btn-primary" onClick={save} disabled={saving || !rows.length}>
                 {saving ? <Loader2 size={17} className="spin" /> : <ClipboardPaste size={17} />} Save {rows.length} {def.noun}
               </button>

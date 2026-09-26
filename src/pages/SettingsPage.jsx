@@ -68,6 +68,21 @@ export default function SettingsPage({ user, notify }) {
           <p className="hint">The evening summary goes out at about 8 PM once the daily trigger is set up in Apps Script.</p>
         </div>
 
+        <div>
+          <span className="label">Follow-up reminder emails (every morning, about 9 AM)</span>
+          <div className="moods" role="radiogroup" aria-label="Follow-up reminder emails">
+            {[{ v: 'yes', l: 'Email each person their follow-ups' }, { v: 'no', l: 'Off' }].map((o) => (
+              <button key={o.v} type="button" role="radio" aria-checked={(s.FOLLOWUP_EMAILS || 'yes') === o.v} className={`mood ${(s.FOLLOWUP_EMAILS || 'yes') === o.v ? 'on' : ''}`} onClick={() => setS({ ...s, FOLLOWUP_EMAILS: o.v })}>{o.l}</button>
+            ))}
+          </div>
+          <div className="moods" role="radiogroup" aria-label="Management follow-up digest" style={{ marginTop: 8 }}>
+            {[{ v: 'yes', l: 'Also send management the overdue list' }, { v: 'no', l: 'Only to the person' }].map((o) => (
+              <button key={o.v} type="button" role="radio" aria-checked={(s.FOLLOWUP_DIGEST || 'no') === o.v} className={`mood ${(s.FOLLOWUP_DIGEST || 'no') === o.v ? 'on' : ''}`} onClick={() => setS({ ...s, FOLLOWUP_DIGEST: o.v })}>{o.l}</button>
+            ))}
+          </div>
+          <p className="hint">Each person sets their own reminder email on the Contacts page (or fill the <b>email</b> column in the Employees sheet). Needs <b>createFollowUpTrigger</b> run once in Apps Script.</p>
+        </div>
+
         <div className="grid-2">
           <div>
             <label className="label" htmlFor="st-company">Company name (email heading)</label>

@@ -23,7 +23,7 @@ Every employee signs in with their name and a 4-digit PIN, fills in the numbers 
 
 **Every import starts with a list title** (e.g. *Driver*, *Call driver*, *Sales*, *Distributor hiring*). The title is saved on every row of that list, shown in the dashboard's "By list title" table, the Call data filter, the Excel "By title" sheet and the emails.
 
-Everyone can add wins, challenges, a plan for tomorrow and a day rating. The status picked from remarks can be changed on the preview screen before saving.
+Everyone can add wins, challenges, a plan for tomorrow and a day rating. Calls and HR calls also carry a follow-up date (see *CRM* below). The status picked from remarks can be changed on the preview screen before saving.
 
 Excel uploads need a header row. Recognised headers include: Name, Number/Mobile/Phone, Remarks, Status, Product, Qty, Unit, Amount, Area, Type, Reason, Position.
 
@@ -54,6 +54,27 @@ The Today screen is built so people log work as it happens and the report writes
 - **Notes are optional** — a one-tap day rating, and wins / challenges / tomorrow's plan tucked behind one button (yesterday's plan is shown as a reminder). Every text box has a **Speak** button for voice typing (Chrome on Android, Safari on iPhone).
 - **Drafts save automatically** — anything typed is kept on the phone, so closing the app or losing signal loses nothing.
 - **Submit bar** shows the day in one line (e.g. *24 calls · 5 interested · 2 orders · ₹6,900*) next to the Submit button.
+
+## CRM: contacts, follow-ups and reminders
+
+- **Follow-up on every call.** When you save a call as *Interested* or *Call back* (or an HR call as *Interview scheduled*), it gets a follow-up date. The app reads it from the remarks — "call back tomorrow 5pm", "monday 11am", "after 3 days", "29/9", and Thanglish like "naalaiku saayangalam call pannunga" or "nalaiku 6 mani". Nothing in the remarks? Call back → next day, Interested → in 2 days. Or tap *Tomorrow / In 3 days / Next Monday / Pick date*.
+- **Follow-ups inbox** on the Today page: *Overdue / Today / Upcoming*. Call or WhatsApp, then tap the result — it's logged for today. *Later ▾* moves it to another day, adds it to Google Calendar, or closes it. Calling the same number again (and logging it) replaces the old follow-up automatically.
+- **Contacts page (CRM tab)** — one card per phone number with every call, order, cancellation and HR call in a timeline, total sales, last contact and next follow-up. Search by name, number, area or notes; filter by *Follow-up due / Interested / Customers / Candidates*; log a call or an order straight from the contact; export to Excel. Admins can see the whole team or one person.
+- **Reminders**
+  - Red badge on the Today tab with how many follow-ups are due.
+  - *Turn on reminders*: phone notification with the day's count, and 5 minutes before each timed follow-up (while the app is open or in the background).
+  - *Add all to calendar*: downloads every follow-up as a calendar file with alarms — works even when the app is closed.
+  - **Morning email (about 9 AM, Mon–Sat)** to each person: overdue, today and the next 3 days, with tap-to-call, WhatsApp and calendar links. Each person saves their email on the Contacts page (PIN needed), or fill the `email` column in the Employees tab. Admins can also send management a daily overdue list (Email settings).
+- **✨ English button** on remarks and every notes box: turns Thanglish or rough English into clear English, with Undo. *Convert remarks to English* on the bulk-import preview does a whole list at once. *Speak* now has an **EN / தமிழ்** switch — speak Tamil, then tap English.
+
+### Turning on the reminder emails and the English button
+
+1. Paste the new `apps-script/Code.gs` into Apps Script and save.
+2. Run **setup** once (adds the new settings; your data stays).
+3. Run **createFollowUpTrigger** once (the 9 AM reminder emails). **sendTestFollowUps** sends today's emails straight away.
+4. **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy** (same URL).
+5. Optional, for proper English sentences: **Project Settings ⚙️ → Script properties → Add script property**: `ANTHROPIC_API_KEY` (Claude, from console.anthropic.com) *or* `GEMINI_API_KEY` (from aistudio.google.com). Run **testPolish** to check it. Without a key the button uses a basic word list, and Tamil script goes through Google Translate.
+6. Check **Project Settings → Time zone** is *(GMT+05:30) India Standard Time* so "today" and 9 AM are right.
 
 ## 1. Run it locally (demo mode)
 

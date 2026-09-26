@@ -4,6 +4,9 @@ import { RECORD_TYPES } from '../config/team';
 import { saveRecords } from '../lib/api';
 import { normalisePhone, classifyCall, classifyHiring } from '../lib/parse';
 import { recentTitles, rememberTitle } from '../lib/titles';
+import { followUpFor, parseWhen } from '../lib/followup';
+import FollowUpPicker from './FollowUpPicker';
+import PolishButton from './PolishButton';
 
 const UNITS = ['kg', 'L', 'pcs', 'box', 'bag', 'g', 'ml'];
 
@@ -38,6 +41,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
   const [editingTitle, setEditingTitle] = useState(false);
   const [v, setV] = useState(() => blank(type));
   const [busy, setBusy] = useState(false);
+  const [fu, setFu] = useState('');
   const firstRef = useRef(null);
 
   // Switching tabs (calls → orders) resets the form and picks that list's last title
@@ -63,6 +67,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
     if (type === 'calls' || type === 'hiring') {
       row.remarks = v.remarks.trim();
       row.status = status || (type === 'calls' ? classifyCall(row.remarks) : classifyHiring(row.remarks));
+      row.followUp = followUpFor(row.status, row.remarks, date, fu);
     }
     if (type === 'orders' || type === 'cancellations') {
       Object.assign(row, { product: v.product.trim(), qty: Number(v.qty) || 0, unit: v.unit, amount: Number(v.amount) || 0 });
@@ -72,7 +77,9 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
 
     // Clear the form straight away so the next entry can be typed while this one saves
     const previous = v;
+    const previousFu = fu;
     setV(blank(type));
+    setFu('');
     firstRef.current?.focus();
     setBusy(true);
     const tempId = `pending_${Date.now()}`;
@@ -85,6 +92,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
     } catch (e) {
       onRemoved(type, tempId);
       setV(previous);
+      setFu(previousFu);
       notify(`Not saved: ${e.message}`, 'error');
     } finally {
       setBusy(false);
@@ -101,6 +109,15 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
           <select className="input" value={v.unit} onChange={set('unit')} aria-label="Unit">
             {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
           </select>
+        </div>
+      );
+    }
+    if (k === 'remarks' || k === 'reason') {
+      return (
+        <div key={k} className={`ql-${k} ql-with-btn`}>
+          <input className="input" type="text" autoComplete="off" placeholder={k === 'remarks' ? 'Remarks — English or Thanglish' : PLACEHOLDER[k]} aria-label={PLACEHOLDER[k]}
+            value={v[k]} onChange={set(k)} onKeyDown={onKey} />
+          <PolishButton compact value={v[k]} onChange={(t) => setV((x) => ({ ...x, [k]: t }))} notify={notify} />
         </div>
       );
     }
@@ -154,6 +171,8 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
 
       {tapToSave ? (
         <>
+          <FollowUpPicker value={fu} onChange={setFu} auto={parseWhen(v.remarks, date)} base={date}
+            label={type === 'hiring' ? 'Interview / follow up' : 'Follow up'} />
           <p className="ql-cue">Tap the result to save</p>
           <div className="ql-status">
             {def.statuses.map((s) => (
