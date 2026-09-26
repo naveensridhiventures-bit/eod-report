@@ -1,5 +1,7 @@
-import { CalendarClock } from 'lucide-react';
-import { quickDates, whenLabel, fuDate, fuTime } from '../lib/followup';
+import { useState } from 'react';
+import { CalendarClock, CalendarDays } from 'lucide-react';
+import DateTimeSheet from './DateTimeSheet';
+import { quickDates, whenLabel } from '../lib/followup';
 import { todayISO } from '../lib/date';
 
 /**
@@ -9,6 +11,7 @@ import { todayISO } from '../lib/date';
 export default function FollowUpPicker({ value, onChange, auto, base = todayISO(), label = 'Follow up' }) {
   const quick = quickDates(base);
   const custom = value && !quick.some((q) => q.value === value);
+  const [open, setOpen] = useState(false);
   return (
     <div className="fu-picker">
       <span className="fu-picker-label"><CalendarClock size={14} /> {label}</span>
@@ -21,12 +24,11 @@ export default function FollowUpPicker({ value, onChange, auto, base = todayISO(
         {quick.map((q) => (
           <button key={q.key} type="button" className={`chip chip-btn ${value === q.value ? 'on' : ''}`} onClick={() => onChange(q.value)}>{q.label}</button>
         ))}
-        <label className={`chip chip-btn fu-date ${custom ? 'on' : ''}`}>
-          {custom ? whenLabel(value, base) : 'Pick date'}
-          <input type="datetime-local" min={`${base}T00:00`} value={custom ? `${fuDate(value)}T${fuTime(value) || '10:00'}` : ''}
-            onChange={(e) => e.target.value && onChange(e.target.value.replace('T', ' ').slice(0, 16))} aria-label="Pick a follow-up date and time" />
-        </label>
+        <button type="button" className={`chip chip-btn ${custom ? 'on' : ''}`} onClick={() => setOpen(true)}>
+          <CalendarDays size={13} style={{ verticalAlign: -2 }} /> {custom ? whenLabel(value, base) : 'Pick date'}
+        </button>
       </div>
+      {open && <DateTimeSheet value={value} min={base} onClose={() => setOpen(false)} onPick={(v) => { onChange(v); setOpen(false); }} />}
     </div>
   );
 }

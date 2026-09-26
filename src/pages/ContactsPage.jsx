@@ -12,6 +12,7 @@ import FollowUpPicker from '../components/FollowUpPicker';
 import PolishButton from '../components/PolishButton';
 import VoiceButton from '../components/VoiceButton';
 import CallButton from '../components/CallButton';
+import Persona from '../components/Persona';
 import { nextSteps } from '../lib/followup';
 import { RECORDS_SAVED, onEvent } from '../lib/events';
 
@@ -76,7 +77,7 @@ function ContactSheet({ c, user, onClose, onAdded, onUpdated, notify }) {
       <div className="sheet sheet-wide contact-sheet" role="dialog" aria-modal="true" aria-labelledby="ct-name" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-top">
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', minWidth: 0 }}>
-            <Avatar person={{ id: c.key, name: c.name || c.phone }} size={46} />
+            <Persona name={c.name} phone={c.phone} size={58} ring={c.kind === 'candidate' ? 'hiring' : 'sales'} />
             <div style={{ minWidth: 0 }}>
               <h2 id="ct-name" className="ct-name">{c.name || c.phone}</h2>
               <div className="ct-sub">
@@ -309,7 +310,7 @@ export default function ContactsPage({ user, employees, notify }) {
         <div className="ct-list">
           {shown.slice(0, limit).map((c) => (
             <button key={c.key} className="ct-row" onClick={() => setOpenKey(c.key)}>
-              <Avatar person={{ id: c.key, name: c.name || c.phone }} />
+              <Persona name={c.name} phone={c.phone} size={44} ring={c.fu && bucketOf(c.fu) === 'overdue' ? 'late' : c.kind === 'candidate' ? 'hiring' : 'sales'} />
               <div className="ct-row-main">
                 <div className="ct-row-name">{c.name || c.phone} {c.title && <span className="title-tag">{c.title}</span>}</div>
                 <div className="ct-row-meta">

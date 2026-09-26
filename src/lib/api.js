@@ -268,6 +268,12 @@ export async function polishTexts(texts) {
   return post({ action: 'polish', texts });
 }
 
+/** Admin turns AI English on/off. provider: 'gemini' | 'claude' | 'off'. Returns the engine now in use. */
+export async function saveAiKey(employeeId, pin, provider, key) {
+  if (IS_DEMO) throw new Error('Connect Google Sheets first — the key is stored safely on your server.');
+  return post({ action: 'saveAiKey', employeeId, pin, provider, key });
+}
+
 /** Lets someone set the email their follow-up reminders go to (PIN checked on the server). */
 export async function saveMyEmail(employeeId, pin, email) {
   if (IS_DEMO) throw new Error('Connect Google Sheets to use email reminders.');

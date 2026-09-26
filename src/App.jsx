@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings, Users, ListChecks, Briefcase, TrendingUp, MoreHorizontal, X } from 'lucide-react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings, Users, ListChecks, Briefcase, TrendingUp, MoreHorizontal, X, CalendarDays } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
 import MyReports from './pages/MyReports';
@@ -12,6 +12,7 @@ import LeadsPage from './pages/LeadsPage';
 import HiringPage from './pages/HiringPage';
 import PerformancePage from './pages/PerformancePage';
 import CallResultSheet from './components/CallResultSheet';
+import CalendarPage from './pages/CalendarPage';
 import { Avatar, Toast } from './components/ui';
 import { fetchEmployees, IS_DEMO } from './lib/api';
 
@@ -73,6 +74,7 @@ export default function App() {
   const nav = [
     !user.viewOnly && { key: 'today', label: 'Today’s report', short: 'Today', icon: CalendarCheck2 },
     (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'contacts', label: 'Contacts & follow-ups', short: 'CRM', icon: Users },
+    (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'calendar', label: 'Calendar', short: 'Calendar', icon: CalendarDays },
     user.isAdmin && !user.viewOnly && { key: 'leads', label: 'Call queue', short: 'Leads', icon: ListChecks },
     (user.isAdmin || user.roles.includes('hiring')) && { key: 'hiring', label: 'Hiring pipeline', short: 'Hiring', icon: Briefcase },
     (user.isAdmin || user.roles.some((r) => r === 'telecaller' || r === 'hiring')) && { key: 'performance', label: 'Performance', short: 'Stats', icon: TrendingUp },
@@ -123,6 +125,7 @@ export default function App() {
         {page === 'today' && <DailyEntry {...props} onDue={setDue} />}
         {page === 'contacts' && <ContactsPage {...props} />}
         {page === 'leads' && <LeadsPage {...props} />}
+        {page === 'calendar' && <CalendarPage {...props} />}
         {page === 'hiring' && <HiringPage {...props} />}
         {page === 'performance' && <PerformancePage {...props} />}
         {page === 'history' && <MyReports {...props} />}

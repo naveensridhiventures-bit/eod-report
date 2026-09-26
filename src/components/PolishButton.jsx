@@ -22,7 +22,10 @@ export default function PolishButton({ value, onChange, notify, compact }) {
       if (!out || out === text) { notify?.('Looks good already.'); return; }
       onChange(out);
       setBefore({ original: value, after: out });
-      if (res.engine === 'basic') notify?.('Basic conversion. Ask your admin to add an AI key for full sentences.');
+      if (res.engine === 'basic' && !sessionStorage.getItem('pulse_basic_hint')) {
+        sessionStorage.setItem('pulse_basic_hint', '1');
+        notify?.('Converted with the basic word list. For perfect sentences, an admin can turn on AI English in Settings.');
+      }
     } catch (e) {
       notify?.(`Couldn’t convert: ${e.message}`, 'error');
     } finally {

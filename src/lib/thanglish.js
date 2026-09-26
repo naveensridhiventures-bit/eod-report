@@ -1,60 +1,51 @@
 // ─────────────────────────────────────────────────────────────
-//  Basic Thanglish → English, used in demo mode and when no AI key
-//  is set on the server. With an AI key (see README) the server
-//  rewrites notes into proper English instead.
+//  Offline Thanglish → English (demo mode, and when no AI key is set).
+//  With AI English turned on (Settings), the server writes proper
+//  sentences instead. The same logic runs on the server as polishBasic_.
 // ─────────────────────────────────────────────────────────────
-const PHRASES = [
-  [/\binterest(?:ed)? illa(?:i)?\b|\bintrest illa\b/g, 'not interested'],
-  [/\b(?:thevai|theva) illa(?:i)?\b/g, 'not needed'],
-  [/\b(?:phone |call )?(?:edukala|edukkala|eduthala|edukalai|edukavillai)\b/g, 'did not pick up'],
-  [/\breach aagala\b|\breach agala\b/g, 'not reachable'],
-  [/\bswitch ?off (?:ah|ha|a)? ?(?:iruku|irukku|irundhuchu)\b/g, 'switched off'],
-  [/\bbusy (?:ah|ha|ya|a)? ?(?:iruku|irukku|irukanga|irukaru)\b/g, 'busy'],
-  [/\bcall (?:pannunga|panunga|pannu|pannanum|pannuven|panren)\b/g, 'call'],
-  [/\bcall back pannunga\b/g, 'call back'],
-  [/\b(?:kupdunga|koopdunga|kooptunga|kupudunga)\b/g, 'call them'],
-  [/\border (?:podrom|poduvom|poduvanga|poduvaru|potanga|pottanga|pannuvanga)\b/g, 'will place an order'],
-  [/\bjoin (?:pannitaru|pannitanga|panitaru|panitanga|aagitaru|agitaru)\b/g, 'has joined'],
-  [/\bjoin (?:panraru|panranga|pannuvaru|pannuvanga)\b/g, 'will join'],
-  [/\binterview(?: ku| kku)? (?:varuvanga|varuvaanga|varuvaru|varuvaar|varen)\b/g, 'will come for the interview'],
-  [/\b(?:yosichu|yosithu) solren\b|\byosikiren\b|\byosikaren\b/g, 'will think and let us know'],
-  [/\b(?:ok|okay) nu (?:sonnanga|sonnaru|sonnar)\b/g, 'agreed'],
-  [/\bprice list\b/g, 'price list']
-];
+import { PHRASES, WORDS, TYPOS, GRAMMAR, QUESTION_START, REPORTED, PROPER } from './thanglish-data';
 
-const WORDS = {
-  venum: 'wants', vendum: 'needs', venam: "doesn't want", venaam: "doesn't want", vendam: "doesn't want", vendaam: "doesn't want",
-  illa: 'no', illai: 'no', ila: 'no', aama: 'yes', aamaa: 'yes',
-  naalaiku: 'tomorrow', nalaiku: 'tomorrow', naalaikku: 'tomorrow', nalaikku: 'tomorrow', nalaki: 'tomorrow',
-  inniku: 'today', indru: 'today', innaiku: 'today', innikku: 'today',
-  aprom: 'later', apram: 'later', apparam: 'later', appuram: 'later',
-  saayangalam: 'evening', sayangalam: 'evening', kaalaila: 'in the morning', kalaila: 'in the morning', madhiyam: 'afternoon',
-  mani: "o'clock", vaaram: 'week', varam: 'week', adutha: 'next', ippo: 'now', ipo: 'now',
-  sonnanga: 'said', sonnaru: 'said', sonnar: 'said', sollunga: 'please tell', sollu: 'tell',
-  pesunga: 'please talk', pesinen: 'spoke', pesunen: 'spoke', pesalam: "let's talk", pesanum: 'need to talk',
-  anupunga: 'send', anuppunga: 'send', anuppu: 'send', anupu: 'send', anupinen: 'sent',
-  varuvanga: 'will come', varuvaanga: 'will come', varuvaru: 'will come', varala: 'did not come', varla: 'did not come', vanthanga: 'came',
-  pakalam: "we'll see", paakalam: "we'll see", paakuren: 'will check', pakuren: 'will check',
-  vilai: 'price', rate: 'price', kammi: 'low', kamma: 'low', jaasthi: 'high', jasthi: 'high', adhigam: 'high', athigam: 'high',
-  kandippa: 'definitely', konjam: 'a little', romba: 'very', nalla: 'good', sari: 'okay', seri: 'okay',
-  avanga: 'they', avaru: 'he', aval: 'she', naan: 'I', naanga: 'we', enakku: 'I', avangaluku: 'they',
-  aachu: 'done', achu: 'done', mudinjuchu: 'finished', mudinjathu: 'finished', kettanga: 'asked', kettaru: 'asked',
-  kadai: 'shop', kada: 'shop', ennai: 'oil', arisi: 'rice', paruppu: 'dal', sakkarai: 'sugar'
-};
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Longest phrases first so "call back pannunga" wins over "call pannunga"
+const PHRASE_RES = PHRASES
+  .flatMap(([alts, en]) => alts.map((a) => [a, en]))
+  .sort((a, b) => b[0].length - a[0].length)
+  .map(([a, en]) => [new RegExp(`\\b${esc(a).replace(/ /g, '\\s+')}\\b`, 'gi'), en]);
+const GRAMMAR_RES = GRAMMAR.map(([re, to]) => [new RegExp(re, 'gi'), to]);
+const PARTICLES = /\s+\b(ah|ha|nu|um|dhan|than|ku|kku|la|da|di|pa|ma|ji|nga)\b(?=[\s,.!?]|$)/gi;
+const QUESTION = new RegExp(QUESTION_START, 'i');
+const REPORTED_RES = REPORTED.map(([re, to]) => [new RegExp(re, 'gi'), to]);
+const PROPER_RE = new RegExp(`\\b(${PROPER.join('|')})\\b`, 'gi');
+
+function sentenceCase(text) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => {
+      let t = s.trim();
+      if (!t) return '';
+      t = t.charAt(0).toUpperCase() + t.slice(1);
+      if (!/[.!?]$/.test(t)) t += QUESTION.test(t) ? '?' : '.';
+      return t;
+    })
+    .filter(Boolean)
+    .join(' ');
+}
 
 export function basicPolish(text) {
-  let t = ` ${String(text || '').trim()} `;
+  let t = ` ${String(text || '').replace(/\s+/g, ' ').trim()} `;
   if (!t.trim()) return '';
-  let low = t.toLowerCase();
-  PHRASES.forEach(([re, en]) => { low = low.replace(re, en); });
-  low = low.replace(/\b[a-z']+\b/g, (w) => WORDS[w] || w);
-  low = low
-    .replace(/\s+(ah|ha|la|nu|um|dhan|than|ku|kku)\b/g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/\bi\b/g, 'I')
-    .trim();
-  if (!low) return '';
-  low = low.charAt(0).toUpperCase() + low.slice(1);
-  if (!/[.!?]$/.test(low)) low += '.';
-  return low;
+  REPORTED_RES.forEach(([re, to]) => { t = t.replace(re, to); });
+  PHRASE_RES.forEach(([re, en]) => { t = t.replace(re, en); });
+  t = t.replace(/\b[A-Za-z']+\b/g, (w) => {
+    const low = w.toLowerCase();
+    if (WORDS[low] !== undefined) return WORDS[low];
+    if (TYPOS[low] !== undefined) return TYPOS[low];
+    return w;
+  });
+  t = t.replace(PARTICLES, '');
+  t = t.replace(/\bi\b/g, 'I').replace(PROPER_RE, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  t = t.replace(/\s+/g, ' ');
+  GRAMMAR_RES.forEach(([re, to]) => { t = t.replace(re, to); });
+  t = t.replace(/\s+/g, ' ').replace(/\s+([,.!?])/g, '$1').replace(/,\s*,/g, ',').trim();
+  return sentenceCase(t);
 }

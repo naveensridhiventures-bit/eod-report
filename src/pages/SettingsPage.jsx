@@ -1,11 +1,84 @@
 import { useEffect, useState } from 'react';
-import { Mail, Save, Loader2, Send, Lock } from 'lucide-react';
-import { fetchSettings, saveSettings, emailEODNow, IS_DEMO } from '../lib/api';
+import { Mail, Save, Loader2, Send, Lock, Sparkles, KeyRound } from 'lucide-react';
+import { fetchSettings, saveSettings, emailEODNow, IS_DEMO, saveAiKey, polishTexts } from '../lib/api';
 import { todayISO } from '../lib/date';
 import { Loading } from '../components/ui';
 import { TARGET_METRICS, DEFAULT_TARGETS } from '../config/team';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const SAMPLE = 'enna pandra\nnaalaiku saayangalam 5 mani call pannunga, price list anupunga\nhe dont want now, call back him next week\nlicence iruku, salary evlo nu kettaru';
+const ENGINE_LABEL = { gemini: 'Gemini AI', claude: 'Claude AI', basic: 'Basic word list (no AI)', cache: 'AI (saved result)' };
+
+function AiEnglish({ user, engine, onEngine, notify }) {
+  const [provider, setProvider] = useState('gemini');
+  const [key, setKey] = useState('');
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sample, setSample] = useState(SAMPLE);
+  const [result, setResult] = useState(null);
+
+  const save = async (p = provider) => {
+    if (p !== 'off' && !key.trim()) { notify('Paste the API key first.', 'error'); return; }
+    if (pin.length !== 4) { notify('Enter your 4-digit PIN to confirm.', 'error'); return; }
+    setBusy(true);
+    try {
+      const now = await saveAiKey(user.id, pin, p, key);
+      onEngine(now); setKey(''); setPin('');
+      notify(now === 'basic' ? 'AI English turned off.' : `AI English is on (${ENGINE_LABEL[now]}).`);
+    } catch (e) { notify(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const test = async () => {
+    setBusy(true);
+    try {
+      const lines = sample.split('\n').map((l) => l.trim()).filter(Boolean);
+      const res = await polishTexts(lines);
+      setResult({ rows: lines.map((l, i) => [l, res.texts[i]]), engine: res.engine });
+    } catch (e) { notify(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="panel stack" style={{ marginTop: 16 }}>
+      <div>
+        <h3><Sparkles size={17} style={{ verticalAlign: -3, color: '#6a3fb5' }} /> AI English (Thanglish → English)</h3>
+        <p className="muted" style={{ fontSize: 14 }}>
+          Now using: <b className={engine === 'basic' ? '' : 'ai-on'}>{ENGINE_LABEL[engine] || engine}</b>.
+          {engine === 'basic' && ' The basic word list handles common Thanglish, but an AI key gives proper, grammatically correct sentences.'}
+        </p>
+      </div>
+      <ol className="ai-steps">
+        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
+        <li>Click <b>Create API key</b> and copy it. Gemini has a free tier (no card needed) with daily limits — plenty for team notes.</li>
+        <li>Paste it below, enter your PIN and tap <b>Save & test key</b>.</li>
+      </ol>
+      <div className="reminder-row">
+        <select className="input" style={{ width: 'auto' }} value={provider} onChange={(e) => setProvider(e.target.value)} aria-label="AI provider">
+          <option value="gemini">Google Gemini</option>
+          <option value="claude">Anthropic Claude</option>
+        </select>
+        <input className="input" style={{ flex: '3 1 220px' }} type="password" autoComplete="off" placeholder="Paste API key" value={key} onChange={(e) => setKey(e.target.value)} disabled={IS_DEMO} />
+        <input className="input pin-small" type="password" inputMode="numeric" maxLength={4} placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="Your PIN" disabled={IS_DEMO} />
+        <button className="btn btn-primary" onClick={() => save()} disabled={busy || IS_DEMO}>{busy ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />} Save & test key</button>
+        {engine !== 'basic' && <button className="btn btn-ghost" onClick={() => save('off')} disabled={busy || IS_DEMO}>Turn off</button>}
+      </div>
+      <p className="hint">The key is kept in your Apps Script’s private settings — never in the Sheet or the app. Free-tier requests may be used by Google to improve its products; check Google’s terms if that matters for your data.</p>
+
+      <div>
+        <label className="label" htmlFor="ai-sample">Try it — one note per line</label>
+        <textarea id="ai-sample" className="textarea" rows={4} value={sample} onChange={(e) => setSample(e.target.value)} />
+        <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={test} disabled={busy}><Sparkles size={16} /> Convert</button>
+      </div>
+      {result && (
+        <div className="ai-result">
+          <span className="chip">{ENGINE_LABEL[result.engine] || result.engine}</span>
+          {result.rows.map(([a, b], i) => <div key={i} className="ai-row"><span className="muted">{a}</span><b>{b}</b></div>)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage({ user, employees = [], notify }) {
   const [s, setS] = useState(null);
@@ -138,6 +211,8 @@ export default function SettingsPage({ user, employees = [], notify }) {
           </div>
         </div>
       </div>
+
+      <AiEnglish user={user} engine={s.AI_ENGINE || (IS_DEMO ? 'basic' : 'basic')} onEngine={(e) => setS((x) => ({ ...x, AI_ENGINE: e }))} notify={notify} />
 
       <div className="panel" style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>

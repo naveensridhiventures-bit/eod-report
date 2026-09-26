@@ -7,6 +7,7 @@ import { RECORDS_SAVED, onEvent } from '../lib/events';
 import { toISO, addDays, todayISO, fromISO, monthRange } from '../lib/date';
 import { Loading, Segmented } from '../components/ui';
 import CallButton from '../components/CallButton';
+import Persona from '../components/Persona';
 
 const STATUS = RECORD_TYPES.hiring.statuses;
 const label = (v) => STATUS.find((s) => s.value === v)?.label || v;
@@ -49,7 +50,8 @@ function CandidateCard({ c, user, notify, onAdded }) {
   return (
     <div className={`hp-card ${busy ? 'busy' : ''}`}>
       <div className="hp-card-top">
-        <div style={{ minWidth: 0 }}>
+        <Persona name={c.name} phone={c.phone} size={40} ring={c.stage === 'dropped' ? 'late' : 'hiring'} />
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div className="hp-name">{c.name || c.phone}</div>
           <div className="hp-meta">{c.title && <span className="title-tag">{c.title}</span>}<span className={`chip tone-${tone(c.status)}`}>{label(c.status)}</span></div>
         </div>

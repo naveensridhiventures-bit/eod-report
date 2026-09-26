@@ -9,6 +9,7 @@ import { todayISO } from '../lib/date';
 import FollowUpPicker from './FollowUpPicker';
 import PolishButton from './PolishButton';
 import VoiceButton from './VoiceButton';
+import Persona from './Persona';
 
 /** Pops up after a call made from the app: "How did the call with X go?" */
 export default function CallResultSheet({ user, notify }) {
@@ -64,7 +65,7 @@ export default function CallResultSheet({ user, notify }) {
       <div className="sheet call-sheet" role="dialog" aria-modal="true" aria-labelledby="call-title">
         <div className="sheet-top">
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <span className="call-icon"><PhoneCall size={20} /></span>
+            <Persona name={call.name} phone={call.phone} size={52} ring={type === 'hiring' ? 'hiring' : 'sales'} />
             <div>
               <h2 id="call-title" style={{ fontSize: 19 }}>How did the call go?</h2>
               <p className="muted" style={{ fontSize: 14 }}>{call.name || call.phone}{call.title ? ` · ${call.title}` : ''}</p>

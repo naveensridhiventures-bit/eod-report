@@ -75,6 +75,12 @@ The Today screen is built so people log work as it happens and the report writes
 - **Hiring pipeline.** Candidates move Contacted → Scheduled → Attended → Selected → Joined (or Dropped). After an interview date the follow-up asks *Did they come?* (Attended / No-show). Selected people get a *Confirm joining* follow-up, and joiners get a day-7 check-in (*Still working* / *Relieved*). The page shows the funnel, the **show-up rate** and no-shows, and **open positions** with headcount (e.g. Driver 2/5 filled).
 - **Targets & performance.** Admins set daily targets (Settings → Daily targets; per person or for everyone). Everyone sees progress bars on Today. The **Performance** page shows sales and hiring funnels, talk time, **follow-ups called on time**, days the target was hit, a day-by-day chart, a leaderboard, and a **PDF** report per person or the team.
 
+## Calendar, characters & AI English
+
+- **Calendar page** — a month view with a friendly illustrated character for every person on the day they're due (green ring = sales, blue = hiring, red = overdue). Tap a day for the list with Call, WhatsApp, Google Calendar, Reschedule and Close. **Download picture** makes a poster of the month (great for WhatsApp), plus **PDF**, **Share** (phones) and **Add all to phone calendar**. Admins can view the whole team or one person.
+- **Date & time picker** — "Pick date" now opens the app's own calendar with quick days and time buttons, so it works the same on every phone and computer.
+- **AI English** — Settings → *AI English*: paste a free Gemini key from aistudio.google.com/apikey (or a Claude key), enter your PIN, *Save & test key*, and try your own notes right there. Without a key the ✨ English button uses a much bigger offline word list with grammar fixes ("enna pandra" → "What are you doing?"). Edit the word list in `src/lib/thanglish-data.js`, then run `python scripts/sync-thanglish.py` to copy it to `Code.gs`.
+
 ### After updating Code.gs for this version
 
 Paste the new `Code.gs`, run **setup** once (it adds the *Leads*, *Do Not Call* and *Openings* tabs and the new columns), then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**.

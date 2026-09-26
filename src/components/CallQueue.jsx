@@ -7,6 +7,7 @@ import { dupeInfo } from '../lib/teamIndex';
 import { emitSaved } from '../lib/events';
 import { todayISO } from '../lib/date';
 import CallButton from './CallButton';
+import Persona from './Persona';
 
 const SKIP_KEY = 'pulse_queue_skipped';
 const readSkips = () => { try { return JSON.parse(sessionStorage.getItem(SKIP_KEY)) || []; } catch { return []; } };
@@ -105,6 +106,7 @@ export default function CallQueue({ user, leads, teamIdx, notify, onLeadChanged 
         {lead ? (
           <div className={`q-card ${busy ? 'busy' : ''}`}>
             <div className="q-top">
+              <Persona name={lead.name} phone={lead.phone} size={64} ring={lead.kind === 'hiring' ? 'hiring' : 'sales'} />
               <div style={{ minWidth: 0 }}>
                 <div className="q-name">{lead.name || lead.phone}</div>
                 <div className="q-meta">

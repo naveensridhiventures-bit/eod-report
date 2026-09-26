@@ -4,6 +4,8 @@ import { RECORD_TYPES } from '../config/team';
 import { saveRecords, updateRecord, emailMyFollowUps, IS_DEMO } from '../lib/api';
 import { bucketOf, whenLabel, quickDates, calendarLink, downloadIcs, waLink, followUpFor, fuDate, nextSteps, followUpPrompt } from '../lib/followup';
 import CallButton from './CallButton';
+import DateTimeSheet from './DateTimeSheet';
+import Persona from './Persona';
 import { enableNotifications, notifyOn, notifySupported, scheduleReminders } from '../lib/reminders';
 import { todayISO, toISO, addDays } from '../lib/date';
 
@@ -11,6 +13,7 @@ import { todayISO, toISO, addDays } from '../lib/date';
 export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
   const [busy, setBusy] = useState(false);
   const [snooze, setSnooze] = useState(false);
+  const [picking, setPicking] = useState(false);
   const late = bucketOf(r.fu) === 'overdue';
   const statuses = RECORD_TYPES[r.type_].statuses;
 
@@ -41,7 +44,9 @@ export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
 
   return (
     <div className={`fu-item ${busy ? 'busy' : ''}`}>
-      <div className="fu-main">
+      <div className="fu-main fu-with-face">
+        <Persona name={r.name} phone={r.phone} size={42} ring={late ? 'late' : r.type_ === 'hiring' ? 'hiring' : 'sales'} />
+        <div style={{ minWidth: 0 }}>
         <div className="fu-name">
           {r.name || r.phone}
           {r.title && <span className="title-tag">{r.title}</span>}
@@ -49,6 +54,7 @@ export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
         </div>
         {followUpPrompt(r.type_, r.status) && <div className="fu-prompt">{followUpPrompt(r.type_, r.status)}</div>}
         {r.remarks && <div className="fu-meta">{r.remarks}</div>}
+        </div>
       </div>
       <div className="fu-contact">
         {r.phone && <CallButton className="btn btn-ghost btn-sm" call={{ type: r.type_, name: r.name, phone: r.phone, title: r.title, options: nextSteps(r.type_, r.status), prev: r.status }} />}
@@ -64,13 +70,12 @@ export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
       {snooze && (
         <div className="fu-actions fu-snooze">
           {quickDates(date).map((q) => <button key={q.key} className="chip chip-btn" onClick={() => move(q.value)}>{q.label}</button>)}
-          <label className="chip chip-btn fu-date">Pick date
-            <input type="datetime-local" min={`${date}T00:00`} onChange={(e) => e.target.value && move(e.target.value.replace('T', ' ').slice(0, 16))} />
-          </label>
+          <button className="chip chip-btn" onClick={() => setPicking(true)}>Pick date</button>
           <a className="chip chip-btn" href={calendarLink(r, r.fu)} target="_blank" rel="noreferrer"><CalendarPlus size={13} /> Calendar</a>
           <button className="chip chip-btn" onClick={() => move('done')}><Check size={13} /> Close</button>
         </div>
       )}
+      {picking && <DateTimeSheet value={r.fu} title={`Call ${r.name || r.phone} on…`} onClose={() => setPicking(false)} onPick={(v) => { setPicking(false); move(v); }} />}
     </div>
   );
 }

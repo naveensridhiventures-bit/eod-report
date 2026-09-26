@@ -171,6 +171,7 @@ function doPost(e) {
     if (body.action === 'updateRecord') return json(ok(updateRecord(body.type, body.id, body.fields || {})));
     if (body.action === 'updateRecords') return json(ok(updateRecords(body.type, body.updates || [])));
     if (body.action === 'polish') return json(ok(polishTexts(body.texts || [])));
+    if (body.action === 'saveAiKey') return json(ok(saveAiKey(body.employeeId, body.pin, body.provider, body.key)));
     if (body.action === 'saveMyEmail') return json(ok(saveMyEmail(body.employeeId, body.pin, body.email)));
     if (body.action === 'sendMyFollowUps') return json(ok(sendMyFollowUps(body.employeeId)));
     if (body.action === 'saveSettings') return json(ok(saveSettings(body.employeeId, body.pin, body.settings || {})));
@@ -207,7 +208,38 @@ function doLogin(employeeId, pin) {
 function getSettings() {
   var out = {};
   SETTINGS_DEFAULTS.forEach(function (d) { out[d[0]] = String(getSetting(d[0]) || (settingExists(d[0]) ? '' : d[1])); });
+  out.AI_ENGINE = aiEngine_(); // which AI writes the English — never the key itself
   return out;
+}
+
+function aiEngine_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ANTHROPIC_API_KEY')) return 'claude';
+  if (props.getProperty('GEMINI_API_KEY')) return 'gemini';
+  return 'basic';
+}
+
+/** Admins turn on AI English from the app. The key is kept in Script Properties, not in the Sheet. */
+function saveAiKey(employeeId, pin, provider, key) {
+  var emp = doLogin(employeeId, pin);
+  if (String(emp.isAdmin).toLowerCase() !== 'yes' && emp.isAdmin !== true) throw new Error('Only admins can change this.');
+  var props = PropertiesService.getScriptProperties();
+  key = String(key || '').trim();
+  if (provider === 'off') { props.deleteProperty('GEMINI_API_KEY'); props.deleteProperty('ANTHROPIC_API_KEY'); return aiEngine_(); }
+  if (key.length < 20) throw new Error('That key looks too short. Copy the whole key.');
+  var name = provider === 'claude' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY';
+  // Check the key works before saving it
+  try {
+    if (provider === 'claude') polishWithClaude_(['test'], key, props.getProperty('CLAUDE_MODEL'));
+    else polishWithGemini_(['test'], key, props.getProperty('GEMINI_MODEL'));
+  } catch (err) {
+    throw new Error('The key didn’t work: ' + String(err.message).slice(0, 200));
+  }
+  props.deleteProperty('GEMINI_API_KEY');
+  props.deleteProperty('ANTHROPIC_API_KEY');
+  props.setProperty(name, key);
+  CacheService.getScriptCache().removeAll([]);
+  return aiEngine_();
 }
 
 function saveSettings(employeeId, pin, settings) {
@@ -986,11 +1018,17 @@ function sendTestFollowUps() { sendFollowUpReminders(); }
 //  ENGLISH BUTTON: Thanglish / rough notes → clear English
 // ══════════════════════════════════════════════════════════════
 var POLISH_PROMPT = 'You clean up short work notes typed by telecallers and HR staff at a company in Chennai, India. ' +
-  'Notes may be Thanglish (Tamil written in English letters), Tamil script, or rough English with spelling mistakes. ' +
-  'Rewrite each note as short, clear, correct English that a manager can read quickly. ' +
-  'Keep every fact: names, phone numbers, amounts, products, quantities, dates and times. ' +
-  'Keep about the same length. Do not add details, greetings or explanations. ' +
-  'If a note is already good English, only fix spelling and grammar. ' +
+  'Notes may be Thanglish (Tamil written in English letters), Tamil script, a mix of Tamil and English, or rough English with spelling and grammar mistakes. ' +
+  'Rewrite each note as short, clear, correct English that a manager can read quickly. Always fix the grammar, even if the note is already in English. ' +
+  'Keep every fact: names, phone numbers, amounts, products, quantities, dates and times. Keep about the same length. ' +
+  'Do not add details, greetings, quotes or explanations. Write in the third person for notes about a customer or candidate. ' +
+  'Examples: ' +
+  '"enna pandra" -> "What are you doing?"; ' +
+  '"naalaiku saayangalam 5 mani call pannunga, price list anupunga" -> "Call tomorrow evening at 5. Send the price list."; ' +
+  '"interest illa, rate jaasthi nu sonnanga" -> "Not interested. Said the price is too high."; ' +
+  '"he dont want now, call back him next week" -> "He doesn\'t want it now. Call him back next week."; ' +
+  '"licence iruku, salary evlo nu kettaru" -> "Has a licence. Asked about the salary."; ' +
+  '"interview ku varala" -> "Did not come for the interview.". ' +
   'Reply with only a JSON array of strings, one per input note, in the same order.';
 
 function polishTexts(texts) {
@@ -1044,8 +1082,22 @@ function polishWithClaude_(texts, key, model) {
   return jsonArrayFrom_((data.content || []).map(function (c) { return c.text || ''; }).join(''));
 }
 
+// Model names change over time: try the chosen one, then current free-tier Flash models
+var GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 function polishWithGemini_(texts, key, model) {
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + (model || 'gemini-2.5-flash') + ':generateContent?key=' + encodeURIComponent(key);
+  var list = (model ? [model] : []).concat(GEMINI_MODELS);
+  var lastErr = null;
+  for (var i = 0; i < list.length; i++) {
+    try { return geminiCall_(texts, key, list[i]); }
+    catch (err) {
+      lastErr = err;
+      if (!/ 404| 400.*(model|not found)/i.test(String(err.message))) throw err; // only move on when the model name is unknown
+    }
+  }
+  throw lastErr;
+}
+function geminiCall_(texts, key, model) {
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key);
   var res = UrlFetchApp.fetch(url, {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     payload: JSON.stringify({
@@ -1065,32 +1117,52 @@ function testPolish() {
   console.log(JSON.stringify(polishTexts(['naalaiku saayangalam 5 mani call pannunga, price list anupunga', 'interest illa, rate jaasthi nu sonnanga'])));
 }
 
-// No AI key: Tamil script → Google Translate; Thanglish → common-word list
-var THANGLISH_PHRASES = [
-  [/\binterest(?:ed)? illa(?:i)?\b|\bintrest illa\b/g, 'not interested'], [/\b(?:thevai|theva) illa(?:i)?\b/g, 'not needed'],
-  [/\b(?:phone |call )?(?:edukala|edukkala|eduthala|edukalai)\b/g, 'did not pick up'], [/\breach a+gala\b/g, 'not reachable'],
-  [/\bcall (?:pannunga|panunga|pannu|pannanum)\b/g, 'call'], [/\border (?:podrom|poduvom|poduvanga|poduvaru)\b/g, 'will place an order'],
-  [/\bjoin (?:pannitaru|pannitanga|panitaru|panitanga)\b/g, 'has joined'], [/\binterview(?: ku)? (?:varuvanga|varuvaanga|varuvaru)\b/g, 'will come for the interview'],
-  [/\b(?:yosichu|yosithu) solren\b|\byosikiren\b/g, 'will think and let us know']
-];
-var THANGLISH_WORDS = {
-  venum: 'wants', venam: "doesn't want", venaam: "doesn't want", vendam: "doesn't want", illa: 'no', illai: 'no',
-  naalaiku: 'tomorrow', nalaiku: 'tomorrow', naalaikku: 'tomorrow', inniku: 'today', indru: 'today',
-  aprom: 'later', apram: 'later', apparam: 'later', saayangalam: 'evening', sayangalam: 'evening', kaalaila: 'in the morning',
-  mani: "o'clock", vaaram: 'week', adutha: 'next', ippo: 'now', sonnanga: 'said', sonnaru: 'said', sollunga: 'please tell',
-  pesinen: 'spoke', pesalam: "let's talk", anupunga: 'send', anuppunga: 'send', varuvanga: 'will come', varala: 'did not come',
-  pakalam: "we'll see", rate: 'price', vilai: 'price', kammi: 'low', jaasthi: 'high', kandippa: 'definitely', romba: 'very',
-  avanga: 'they', avaru: 'he', aachu: 'done', kettanga: 'asked', kadai: 'shop', ennai: 'oil', arisi: 'rice'
-};
-function polishBasic_(t) {
-  if (/[\u0B80-\u0BFF]/.test(t)) { try { return LanguageApp.translate(t, 'ta', 'en'); } catch (e) { /* fall through */ } }
-  var s = ' ' + String(t).toLowerCase() + ' ';
-  THANGLISH_PHRASES.forEach(function (p) { s = s.replace(p[0], p[1]); });
-  s = s.replace(/\b[a-z']+\b/g, function (w) { return THANGLISH_WORDS[w] || w; })
-    .replace(/\s+(ah|ha|la|nu|um|dhan|than|ku|kku)\b/g, '').replace(/\s+/g, ' ').replace(/\bi\b/g, 'I').trim();
-  if (!s) return t;
-  s = s.charAt(0).toUpperCase() + s.slice(1);
-  return /[.!?]$/.test(s) ? s : s + '.';
+// No AI key: Tamil script → Google Translate; Thanglish → word lists (same as the app's offline mode)
+// <thanglish-data> (generated by scripts/sync-thanglish.py — edit src/lib/thanglish-data.js instead)
+var TH_DATA = {"GRAMMAR": [["\\b(he|she|it) (don't)\\b", "$1 doesn't"], ["\\b(they|we|you|I) doesn't\\b", "$1 don't"], ["\\b(he|she|it) have\\b", "$1 has"], ["\\b(he|she|it) want\\b", "$1 wants"], ["\\b(he|she|it) need\\b", "$1 needs"], ["\\b(he|she|it) say\\b", "$1 says"], ["\\b(they|we|you|I) wants\\b", "$1 want"], ["\\b(they|we|you|I) needs\\b", "$1 need"], ["\\bI is\\b", "I am"], ["\\b(he|she|it|they|we|you) is not interest\\b", "$1 is not interested"], ["\\bnot interest\\b", "not interested"], ["\\bis interest\\b", "is interested"], ["\\bcall back (him|her|them)\\b", "call $1 back"], ["\\bwill (came|comes)\\b", "will come"], ["\\bdidn't (came|comes)\\b", "didn't come"], ["\\bdidn't (picked|picks)\\b", "didn't pick"], ["\\bdidn't (joined|joins)\\b", "didn't join"], ["\\bdid not came\\b", "did not come"], ["\\bdid not picked\\b", "did not pick"], ["\\bdid not joined\\b", "did not join"], ["\\ba (order|interview|offer|amount|owner|update|answer|hour)\\b", "an $1"], ["\\ban (price|sample|call|delivery|payment|salary|job|licence|driver|customer)\\b", "a $1"], ["\\b(\\w+) \\1\\b", "$1"], ["\\s+([,.!?])", "$1"]], "PHRASES": [[["enna pandra", "enna panra", "enna panringa", "enna pannureenga", "enna pannura", "enna panreenga", "enna pannringa"], "what are you doing"], [["saptiya", "saapteengala", "sapteengala", "saptingala", "saapitiya", "sapteenga"], "did you eat"], [["enga irukinga", "enga irukeenga", "enga irukka", "enga iruka", "enga irukenga"], "where are you"], [["epo varuvinga", "eppo varuvinga", "epo varuva", "eppo varuveenga", "epo vareenga", "eppo vareenga"], "when will you come"], [["epdi irukinga", "eppadi irukeenga", "epdi iruka", "eppadi irukka", "epdi irukeenga"], "how are you"], [["nalla irukken", "nalla iruken", "nalla irukkaen"], "I am fine"], [["vandhutu irukken", "vanthuttu irukken", "vandhutu iruken", "varen varen"], "I am on the way"], [["kelambitten", "kilambitten", "kelambiten"], "I have left"], [["theriyala", "teriyala", "theriyadhu", "theriyathu", "therla"], "don't know"], [["puriyala", "puriyalai", "puriyalaye"], "didn't understand"], [["mudiyadhu", "mudiyathu", "mudiyala", "mudiyaathu"], "cannot"], [["velai irukku", "vela iruku", "vela irukku", "velai iruku"], "busy with work"], [["leave la irukanga", "leave la irukaru", "leave la iruken", "leave la irukken"], "is on leave"], [["ooru la illa", "oorla illa", "ooru la ila"], "is out of town"], [["interest illa", "interest illai", "intrest illa", "interested illa", "interest ila"], "not interested"], [["thevai illa", "theva illa", "thevai illai", "theva ila"], "not needed"], [["stock illa", "stock ila", "stock illai"], "out of stock"], [["stock iruka", "stock irukka"], "is stock available"], [["delivery eppo", "delivery epo"], "when is the delivery"], [["delivery varala", "delivery varla", "delivery vandhala"], "delivery has not arrived"], [["sample kudunga", "sample anupunga", "sample anuppunga", "sample venum"], "wants a sample"], [["quotation anupunga", "quotation anuppunga", "quotation venum"], "send a quotation"], [["price list anupunga", "price list anuppunga", "price list venum", "rate list anupunga"], "send the price list"], [["location anupunga", "location anuppunga", "location share pannunga"], "send the location"], [["owner illa", "owner ila", "owner illai"], "owner not available"], [["owner kitta pesanum", "owner kita pesanum", "owner kitta pesunga"], "need to talk to the owner"], [["amount anupuren", "amount anuppuren", "pay panren", "pay pannuren", "payment panren"], "will send the payment"], [["payment pannitanga", "pay pannitanga", "amount potutanga", "amount pottutanga", "payment aachu"], "has paid"], [["order podrom", "order poduvom", "order poduvanga", "order poduvaru", "order pannuvanga", "order pannuvaru"], "will place an order"], [["order potanga", "order pottanga", "order pannitanga", "order pottaru"], "placed an order"], [["rate jaasthi", "rate jasthi", "rate adhigam", "rate athigam", "vilai jaasthi"], "price is too high"], [["rate kammi pannunga", "rate kammi panna mudiyuma", "discount venum", "discount kudunga"], "wants a discount"], [["vera kadai la vaanguranga", "vera edathula vaanguranga", "already vaanguranga"], "already buying from another shop"], [["phone edukala", "call edukala", "edukala", "edukkala", "eduthala", "edukalai", "edukavillai", "call attend pannala"], "did not pick up"], [["reach aagala", "reach agala", "not reachable ah iruku"], "not reachable"], [["switch off ah iruku", "switch off ah irukku", "switch off la iruku", "switched off ah iruku"], "phone switched off"], [["busy ah iruku", "busy ah irukku", "busy ya irukanga", "busy ah irukanga", "busy nu sonnanga"], "busy"], [["call back pannunga", "thirumba call pannunga", "marupadiyum call pannunga"], "call back"], [["call pannunga", "call panunga", "call pannu", "call pannanum", "kupdunga", "koopdunga", "kooptunga", "kupudunga"], "call"], [["yosichu solren", "yosithu solren", "yosikiren", "yosikaren", "yosichu sollren"], "will think and let us know"], [["ok nu sonnanga", "ok nu sonnaru", "okay nu sonnanga", "sari nu sonnanga"], "agreed"], [["wrong number", "thappana number", "thappu number"], "wrong number"], [["salary evlo", "salary evvalavu", "sambalam evlo"], "asked about the salary"], [["salary kammi", "sambalam kammi"], "salary is too low"], [["experience iruku", "experience irukku", "anubavam iruku"], "has experience"], [["experience illa", "experience ila", "anubavam illa"], "no experience"], [["licence iruku", "license iruku", "licence irukku", "license irukku"], "has a licence"], [["licence illa", "license illa", "licence ila", "license ila"], "no licence"], [["vela venum", "velai venum", "job venum"], "needs a job"], [["vela venam", "velai venam", "job venam"], "doesn't want the job"], [["interview ku varuvanga", "interview ku varuvaanga", "interview ku varuvaru", "interview ku varen", "interview varuvanga"], "will come for the interview"], [["interview ku varala", "interview varala", "interview ku varla"], "did not come for the interview"], [["join pannitaru", "join pannitanga", "join panitaru", "join panitanga", "join aagitaru", "join agitaru"], "has joined"], [["join panraru", "join panranga", "join pannuvaru", "join pannuvanga"], "will join"], [["vera company la join pannitaru", "vera company join pannitaru", "already vera company"], "already joined another company"], [["vela vittu poitaru", "velaya vittutaru", "resign pannitaru"], "has left the job"]], "PROPER": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "January", "February", "March", "April", "June", "July", "August", "September", "October", "November", "December", "Chennai"], "QUESTION_START": "^(what|when|where|who|why|how)\\b|^(did|do|does|is|are|can|will|could|would|should)\\s+(you|he|she|they|we|i|it|the|this|that|stock|delivery|salary)\\b", "REPORTED": [["(\\s*)([^,.;!?]+?)\\s+nu\\s+(sonnanga|sonnaanga|sonnaru|sonnar|solranga|solraru)\\b", "$1they said $2"], ["(\\s*)([^,.;!?]+?)\\s+nu\\s+(kettanga|kettaru|kekuranga|kekuraru)\\b", "$1asked $2"]], "TYPOS": {"intrested": "interested", "intersted": "interested", "interseted": "interested", "intrsted": "interested", "ntrstd": "interested", "tmrw": "tomorrow", "tmr": "tomorrow", "tomo": "tomorrow", "tommorow": "tomorrow", "tomorow": "tomorrow", "tommorrow": "tomorrow", "tmrow": "tomorrow", "pls": "please", "plz": "please", "plzz": "please", "wil": "will", "recieved": "received", "recived": "received", "wat": "what", "wht": "what", "bcoz": "because", "becoz": "because", "bcz": "because", "coz": "because", "msg": "message", "dnt": "don't", "dont": "don't", "cant": "can't", "wont": "won't", "didnt": "didn't", "doesnt": "doesn't", "isnt": "isn't", "wasnt": "wasn't", "havent": "haven't", "im": "I'm", "ur": "your", "u": "you", "r": "are", "abt": "about", "frm": "from", "nxt": "next", "wk": "week", "mrng": "morning", "evng": "evening", "eve": "evening", "amt": "amount", "pymt": "payment", "dlvry": "delivery", "cust": "customer", "cal": "call", "bck": "back", "thnx": "thanks", "thx": "thanks", "avlbl": "available", "availble": "available", "avaliable": "available", "adress": "address", "addres": "address", "beacuse": "because", "definately": "definitely", "seperate": "separate", "untill": "until", "tommrow": "tomorrow", "shd": "should", "wud": "would", "cud": "could", "lic": "licence", "exp": "experience", "sal": "salary", "intw": "interview", "intvw": "interview", "joing": "joining", "ph": "phone"}, "WORDS": {"enna": "what", "epo": "when", "eppo": "when", "enga": "where", "yaaru": "who", "yaar": "who", "evlo": "how much", "evvalavu": "how much", "epdi": "how", "eppadi": "how", "yen": "why", "en": "why", "naan": "I", "na": "I", "naanga": "we", "nee": "you", "neenga": "you", "avan": "he", "avaru": "he", "aval": "she", "ava": "she", "avanga": "they", "enakku": "I", "enaku": "I", "unakku": "you", "ungalukku": "you", "avangaluku": "they", "avarukku": "he", "amma": "mother", "appa": "father", "naalaiku": "tomorrow", "nalaiku": "tomorrow", "naalaikku": "tomorrow", "nalaikku": "tomorrow", "nalaki": "tomorrow", "naliku": "tomorrow", "inniku": "today", "indru": "today", "innaiku": "today", "innikku": "today", "inniki": "today", "nethu": "yesterday", "nethikku": "yesterday", "neththu": "yesterday", "saayangalam": "evening", "sayangalam": "evening", "saayanthiram": "evening", "kaalaila": "in the morning", "kalaila": "in the morning", "kaalaiyila": "in the morning", "madhiyam": "afternoon", "mathiyam": "afternoon", "raathiri": "night", "rathiri": "night", "mani": "o'clock", "vaaram": "week", "varam": "week", "maasam": "month", "adutha": "next", "ippo": "now", "ipo": "now", "appo": "then", "aprom": "later", "apram": "later", "apparam": "later", "appuram": "later", "innum": "still", "seekiram": "soon", "sikiram": "soon", "udane": "immediately", "thirumba": "again", "marupadiyum": "again", "aama": "yes", "aamaa": "yes", "illa": "no", "illai": "no", "ila": "no", "sari": "okay", "seri": "okay", "venum": "wants", "vendum": "needs", "venam": "doesn't want", "venaam": "doesn't want", "vendam": "doesn't want", "vendaam": "doesn't want", "mudiyum": "can", "mudiyuma": "can you", "sonnanga": "said", "sonnaru": "said", "sonnar": "said", "sonnen": "I said", "sollunga": "please tell", "sollu": "tell", "solren": "will tell", "pesunga": "please talk", "pesinen": "spoke", "pesunen": "spoke", "pesalam": "let's talk", "pesanum": "need to talk", "pesuren": "will talk", "anupunga": "send", "anuppunga": "send", "anuppu": "send", "anupu": "send", "anupinen": "sent", "anuppinen": "sent", "anupuren": "will send", "varuvanga": "will come", "varuvaanga": "will come", "varuvaru": "will come", "varala": "did not come", "varla": "did not come", "vanthanga": "came", "vandhanga": "came", "vanga": "come", "vaanga": "come", "ponga": "go", "poitanga": "left", "poitaru": "left", "pakalam": "we'll see", "paakalam": "we'll see", "paakuren": "will check", "pakuren": "will check", "paarunga": "please check", "kettanga": "asked", "kettaru": "asked", "kekkuren": "will ask", "kudunga": "give", "kudu": "give", "kuduthen": "gave", "vaangunga": "buy", "vaanguvanga": "will buy", "vaangala": "did not buy", "vaanginaanga": "bought", "vaangitanga": "bought", "panren": "will do", "pannuren": "will do", "pannunga": "please do", "pannala": "did not do", "pannitten": "done", "panniten": "done", "irukku": "is there", "iruku": "is there", "irukanga": "are there", "irundhuchu": "was there", "aachu": "done", "achu": "done", "mudinjuchu": "finished", "mudinjathu": "finished", "therinjavanga": "known person", "vilai": "price", "rate": "price", "kammi": "low", "kamma": "low", "jaasthi": "high", "jasthi": "high", "adhigam": "high", "athigam": "high", "kadai": "shop", "kada": "shop", "veedu": "house", "veetla": "at home", "ennai": "oil", "arisi": "rice", "paruppu": "dal", "sakkarai": "sugar", "sambalam": "salary", "vela": "job", "velai": "job", "panam": "money", "kaasu": "money", "kandippa": "definitely", "konjam": "a little", "romba": "very", "rombha": "very", "nalla": "good", "mosam": "bad", "pudhu": "new", "puthu": "new", "pazhaya": "old", "palaya": "old", "nandri": "thank you", "inga": "here", "anga": "there"}};
+// </thanglish-data>
+var TH_ = null;
+function thCompile_() {
+  if (TH_) return TH_;
+  var esc = function (x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+  var phrases = [];
+  TH_DATA.PHRASES.forEach(function (p) { p[0].forEach(function (a) { phrases.push([a, p[1]]); }); });
+  phrases.sort(function (a, b) { return b[0].length - a[0].length; });
+  TH_ = {
+    phrases: phrases.map(function (p) { return [new RegExp('\\b' + esc(p[0]).replace(/ /g, '\\s+') + '\\b', 'gi'), p[1]]; }),
+    grammar: TH_DATA.GRAMMAR.map(function (g) { return [new RegExp(g[0], 'gi'), g[1]]; }),
+    reported: TH_DATA.REPORTED.map(function (g) { return [new RegExp(g[0], 'gi'), g[1]]; }),
+    question: new RegExp(TH_DATA.QUESTION_START, 'i'),
+    proper: new RegExp('\\b(' + TH_DATA.PROPER.join('|') + ')\\b', 'gi'),
+    particles: /\s+\b(ah|ha|nu|um|dhan|than|ku|kku|la|da|di|pa|ma|ji|nga)\b(?=[\s,.!?]|$)/gi
+  };
+  return TH_;
+}
+function polishBasic_(text) {
+  if (/[\u0B80-\u0BFF]/.test(text)) { try { return LanguageApp.translate(text, 'ta', 'en'); } catch (e) { /* fall through */ } }
+  var c = thCompile_();
+  var t = ' ' + String(text || '').replace(/\s+/g, ' ').trim() + ' ';
+  if (!t.trim()) return text;
+  c.reported.forEach(function (r) { t = t.replace(r[0], r[1]); });
+  c.phrases.forEach(function (r) { t = t.replace(r[0], r[1]); });
+  t = t.replace(/\b[A-Za-z']+\b/g, function (w) {
+    var low = w.toLowerCase();
+    if (TH_DATA.WORDS[low] !== undefined) return TH_DATA.WORDS[low];
+    if (TH_DATA.TYPOS[low] !== undefined) return TH_DATA.TYPOS[low];
+    return w;
+  });
+  t = t.replace(c.particles, '');
+  t = t.replace(/\bi\b/g, 'I').replace(c.proper, function (w) { return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(); });
+  t = t.replace(/\s+/g, ' ');
+  c.grammar.forEach(function (r) { t = t.replace(r[0], r[1]); });
+  t = t.replace(/\s+/g, ' ').replace(/\s+([,.!?])/g, '$1').replace(/,\s*,/g, ',').trim();
+  return t.split(/(?<=[.!?])\s+/).map(function (x) {
+    x = x.trim();
+    if (!x) return '';
+    x = x.charAt(0).toUpperCase() + x.slice(1);
+    if (!/[.!?]$/.test(x)) x += c.question.test(x) ? '?' : '.';
+    return x;
+  }).filter(String).join(' ');
 }
 
 
