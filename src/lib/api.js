@@ -5,7 +5,7 @@ import { basicPolish } from './thanglish';
 import { followUpFor } from './followup';
 
 // Live Google Apps Script web app. A VITE_SHEETS_API_URL in .env overrides it.
-const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbyYYSyTpNk0hww76a-MR3lPJk2FLw8wP5vs8sUEB0JuX-oXlauKaCPNq-4uOC5V-Xnhgg/exec';
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxi6gjHH1NxWOe6mCSJy59e5XWpHIA5-HI_-EKVcIE6pJegHf3e0QWubXOXIqMroDiCyg/exec';
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
