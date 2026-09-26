@@ -6,6 +6,7 @@ import { saveRecords } from '../lib/api';
 import { fmtDate } from '../lib/date';
 import { inr } from '../lib/format';
 import { fmtQty } from '../lib/stats';
+import { recentTitles, rememberTitle } from '../lib/titles';
 
 export function StatusChip({ type, value }) {
   const s = statusInfo(type, value);
@@ -81,21 +82,10 @@ function PreviewSummary({ type, rows }) {
   );
 }
 
-const recentKey = (type) => `pulse_titles_${type}`;
-function recentTitles(type) {
-  try { return JSON.parse(localStorage.getItem(recentKey(type))) || []; } catch { return []; }
-}
-function rememberTitle(type, title) {
-  try {
-    const list = [title, ...recentTitles(type).filter((t) => t.toLowerCase() !== title.toLowerCase())].slice(0, 6);
-    localStorage.setItem(recentKey(type), JSON.stringify(list));
-  } catch { /* ignore */ }
-}
-
 /** Paste / upload → check → save */
 export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
   const def = RECORD_TYPES[type];
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(() => recentTitles(type)[0] || ''); // last-used title is filled in for you
   const [text, setText] = useState('');
   const [rows, setRows] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -111,9 +101,9 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
   };
   const stamp = (parsed) => parsed.map((r) => ({ ...r, title: r.title || title.trim() }));
 
-  const read = () => {
+  const read = (src = text) => {
     if (needTitle()) return;
-    const parsed = parseBulk(type, text);
+    const parsed = parseBulk(type, src);
     if (!parsed.length) { notify('No rows found. Put one entry per line with a name and number.', 'error'); return; }
     setRows(stamp(parsed));
   };
@@ -162,7 +152,7 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
     <div className="title-box">
       <label className="label" htmlFor="bi-title-input"><Tag size={15} /> List title <span className="req">required</span></label>
       <input id="bi-title-input" ref={titleRef} className="input title-input" value={title} onChange={(e) => retitle(e.target.value)}
-        placeholder={def.titleHint} autoFocus={!rows} maxLength={60} />
+        placeholder={def.titleHint} autoFocus={!rows && !title} maxLength={60} />
       {!rows && suggestions.length > 0 && (
         <div className="title-chips">
           {suggestions.map((t) => (
@@ -193,11 +183,16 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
               Paste your list, one per line — <b>name, number, then {def.cols.filter((c) => !['title', 'name', 'phone'].includes(c)).map((c) => COL_LABELS[c].toLowerCase()).join(', ')}</b>.
               Copy straight from Excel, WhatsApp or notes. {def.statuses && type !== 'customers' && 'The status is picked up from your remarks; you can change it on the next screen.'}
             </p>
-            <textarea className="textarea mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} />
+            <textarea className="textarea mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} autoFocus={!!title}
+              onPaste={(e) => {
+                // Pasting into an empty box reads the list straight away — no extra tap
+                const pasted = e.clipboardData.getData('text');
+                if (!text.trim() && pasted.trim() && title.trim()) { e.preventDefault(); setText(pasted); read(pasted); }
+              }} />
             <div className="bi-actions">
               <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}><Upload size={17} /> Upload Excel / CSV</button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={upload} />
-              <button className="btn btn-primary" onClick={read} disabled={!text.trim()}><Wand2 size={17} /> Read list</button>
+              <button className="btn btn-primary" onClick={() => read()} disabled={!text.trim()}><Wand2 size={17} /> Read list</button>
             </div>
             <p className="hint">Excel files need a header row, e.g. {def.cols.filter((c) => c !== 'title').map((c) => COL_LABELS[c].replace(' (₹)', '')).join(' | ')}.</p>
           </>

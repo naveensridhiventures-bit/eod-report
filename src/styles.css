@@ -457,3 +457,69 @@ select.cell-input { min-width: 150px; border-color: var(--line); background: #ff
 .title-tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 6px; background: #fdf0db; color: #87540a; white-space: nowrap; }
 .cell-input.title { min-width: 120px; font-weight: 600; }
 .table-wrap.flat { margin: 0; border: 1px solid var(--line); border-radius: 12px; }
+
+/* ─────────────  Quick log (one entry at a time)  ───────────── */
+.quicklog { background: #fbfcfb; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.ql-title { display: flex; align-items: center; gap: 8px; color: #87540a; margin-bottom: 10px; }
+.ql-title-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.ql-title-chips::-webkit-scrollbar { display: none; }
+.ql-title-chips .chip { white-space: nowrap; }
+.chip-btn.on { background: var(--marigold); border-color: var(--marigold); color: var(--ever); }
+.ql-title-input { height: 36px; flex: 1; font-weight: 700; }
+.ql-fields { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+.ql-fields .input { height: 46px; font-size: 16px; min-width: 0; }
+.ql-calls .ql-remarks, .ql-hiring .ql-remarks, .ql-cancellations .ql-reason { grid-column: 1 / -1; }
+.ql-orders .ql-product, .ql-cancellations .ql-product { grid-column: 1 / -1; }
+.ql-qty { display: grid; grid-template-columns: 1fr 76px; gap: 6px; min-width: 0; }
+.ql-cue { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 12px 0 6px; }
+.ql-status { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ql-cue + .ql-status { margin-top: 0; }
+.ql-btn {
+  flex: 1 1 auto; min-height: 44px; padding: 0 14px; border-radius: 12px; font-weight: 700; font-size: 14px;
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; transition: transform .08s, background .15s;
+}
+.ql-btn:active { transform: scale(.97); }
+.ql-btn.sm { min-height: 34px; padding: 0 10px; font-size: 13px; flex: 0 1 auto; border-radius: 9px; }
+.ql-btn.tone-good { background: var(--good-soft); border-color: #bfe3cf; color: #1d7049; }
+.ql-btn.tone-bad { background: var(--bad-soft); border-color: #f2c9c5; color: #a8302a; }
+.ql-btn.tone-gold { background: var(--marigold-soft); border-color: #f2d9ae; color: #87540a; }
+.ql-btn.tone-blue { background: #e3edfb; border-color: #c5d8f4; color: #2a5ea8; }
+.ql-btn.tone-muted { background: var(--mist); color: var(--muted); }
+.ql-btn.on { outline: 2px solid currentColor; outline-offset: -2px; }
+.ql-btn:disabled { opacity: .5; }
+.ql-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.recent-strip { display: flex; flex-direction: column; margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.recent-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; font-size: 14px; border-top: 1px solid var(--line); animation: rise .2s ease; }
+.recent-item:first-child { border-top: 0; }
+.recent-item.pending { opacity: .6; }
+.recent-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─────────────  Follow-ups  ───────────── */
+.followups { border-color: #f2d9ae; }
+.fu-head { width: 100%; border: 0; background: var(--marigold-soft); cursor: pointer; font: inherit; color: inherit; }
+.fu-head h3 { display: flex; align-items: center; gap: 8px; }
+.fu-count { background: var(--ever); color: #fff; font-size: 12px; border-radius: 999px; padding: 1px 8px; }
+.fu-list { max-height: 420px; overflow: auto; }
+.fu-item { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 12px 20px; border-top: 1px solid var(--line); align-items: center; }
+.fu-name { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fu-meta { font-size: 13px; color: var(--muted); }
+.fu-actions { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ─────────────  Notes, voice, savebar  ───────────── */
+.label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.label-row .label { margin-bottom: 0; }
+.voice-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--paper); color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.voice-btn.on { background: var(--bad); border-color: var(--bad); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .7; } }
+.last-plan { background: var(--mist); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.savebar { justify-content: space-between; }
+.savebar-sum { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 14px; }
+.savebar-stats { font-weight: 700; }
+.draft-note { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--good); font-weight: 600; }
+
+@media (max-width: 860px) {
+  .savebar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .savebar-sum { flex-direction: row; justify-content: space-between; font-size: 13px; }
+  .fu-item { padding: 12px 14px; }
+  .quicklog { padding: 12px; }
+}

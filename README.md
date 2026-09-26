@@ -43,6 +43,18 @@ Team setup (edit in the Google Sheet's `Employees` tab once live):
 
 ---
 
+## Filling the report fast
+
+The Today screen is built so people log work as it happens and the report writes itself:
+
+- **Quick log** — type the number (and name if you like), then tap the result: *Interested*, *Call back*, *No answer*… One tap saves it; the form clears and the cursor jumps back to the number box for the next call. Orders, customers and cancellations save with **Enter** or the Add button. Entries save in the background, so you can keep typing.
+- **List title remembered** — the last title you used (Sales, Driver…) is pre-selected; switch with one tap or add a new one.
+- **Follow-ups due** — every *Call back* and *Interview scheduled* from the last 7 days that hasn't been called again appears at the top with a Call button and one-tap results. Tapping a result logs today's follow-up.
+- **Paste a whole list** is still there for bulk entry. The last title is filled in, and pasting into the empty box reads the list straight away.
+- **Notes are optional** — a one-tap day rating, and wins / challenges / tomorrow's plan tucked behind one button (yesterday's plan is shown as a reminder). Every text box has a **Speak** button for voice typing (Chrome on Android, Safari on iPhone).
+- **Drafts save automatically** — anything typed is kept on the phone, so closing the app or losing signal loses nothing.
+- **Submit bar** shows the day in one line (e.g. *24 calls · 5 interested · 2 orders · ₹6,900*) next to the Submit button.
+
 ## 1. Run it locally (demo mode)
 
 ```bash
