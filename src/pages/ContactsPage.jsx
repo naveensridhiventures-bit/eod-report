@@ -11,6 +11,9 @@ import { StatusChip } from '../components/Records';
 import FollowUpPicker from '../components/FollowUpPicker';
 import PolishButton from '../components/PolishButton';
 import VoiceButton from '../components/VoiceButton';
+import CallButton from '../components/CallButton';
+import { nextSteps } from '../lib/followup';
+import { RECORDS_SAVED, onEvent } from '../lib/events';
 
 const KIND = { customer: 'Customer', candidate: 'Candidate', lead: 'Lead' };
 const TYPE_ICON = { calls: PhoneCall, orders: ShoppingBag, customers: Store, cancellations: Ban, hiring: UserPlus };
@@ -88,7 +91,7 @@ function ContactSheet({ c, user, onClose, onAdded, onUpdated, notify }) {
         </div>
 
         <div className="ct-actions">
-          {c.phone && <a className="btn btn-primary" href={`tel:${c.phone}`}><Phone size={17} /> Call</a>}
+          {c.phone && <CallButton className="btn btn-primary" size={17} call={{ type: c.logType, name: c.name, phone: c.phone, title: c.title, options: c.lastTouch ? nextSteps(c.logType, c.status) : undefined, prev: c.status }} />}
           {c.phone && <a className="btn btn-wa" href={waLink(c.phone, `Hello ${c.name || ''}`.trim())} target="_blank" rel="noreferrer"><MessageCircle size={17} /> WhatsApp</a>}
           {c.fu && <a className="btn btn-ghost" href={calendarLink({ ...c, remarks: c.lastTouch?.remarks }, c.fu)} target="_blank" rel="noreferrer"><CalendarPlus size={17} /> Calendar</a>}
         </div>
@@ -223,6 +226,7 @@ export default function ContactsPage({ user, employees, notify }) {
   }, [types, who, notify]);
 
   const onAdded = useCallback((type, recs) => setRecords((all) => ({ ...all, [type]: [...recs, ...(all?.[type] || [])] })), []);
+  useEffect(() => onEvent(RECORDS_SAVED, ({ type, records: recs }) => { if (types.includes(type)) onAdded(type, recs); }), [onAdded, types]);
   const onUpdated = useCallback((type, id, fields) => setRecords((all) => ({ ...all, [type]: (all?.[type] || []).map((r) => (r.id === id ? { ...r, ...fields } : r)) })), []);
 
   const contacts = useMemo(() => (records ? sortContacts(buildContacts(records)) : []), [records]);

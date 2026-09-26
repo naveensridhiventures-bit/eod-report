@@ -37,6 +37,10 @@ export function statsFor(records = blank, range = {}) {
     joined: count(r.hiring, 'joined'),
     drivers_arranged: count(r.hiring, 'driver_arranged'),
     relieved: count(r.hiring, 'relieved'),
+    attended: count(r.hiring, 'attended'),
+    no_shows: count(r.hiring, 'no_show'),
+    selected: count(r.hiring, 'selected'),
+    talk_mins: Math.round(([...r.calls, ...r.hiring].reduce((a, x) => a + (Number(x.duration) || 0), 0)) / 60),
     hr_not_interested: count(r.hiring, 'not_interested')
   };
 }

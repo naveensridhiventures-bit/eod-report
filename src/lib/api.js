@@ -1,6 +1,7 @@
 import { DEFAULT_EMPLOYEES, RECORD_TYPES } from '../config/team';
 import { toISO, addDays } from './date';
 import { classifyCall, classifyHiring } from './parse';
+import { DEFAULT_TARGETS } from '../config/team';
 import { basicPolish } from './thanglish';
 import { followUpFor } from './followup';
 
@@ -9,8 +10,8 @@ const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxi6gjHH1NxWOe6
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
-const LS_REPORTS = 'pulse_demo_reports_v4';
-const LS_RECORDS = 'pulse_demo_records_v4';
+const LS_REPORTS = 'pulse_demo_reports_v6';
+const LS_RECORDS = 'pulse_demo_records_v6';
 const LS_SETTINGS = 'pulse_demo_settings_v1';
 export const TYPE_KEYS = Object.keys(RECORD_TYPES);
 
@@ -60,6 +61,11 @@ const AREAS = ['Tambaram', 'Velachery', 'Porur', 'Anna Nagar', 'T Nagar', 'Guind
 const PRODUCTS = [['Groundnut oil', 'L', 230], ['Sunflower oil', 'L', 160], ['Rice', 'kg', 56], ['Toor dal', 'kg', 140], ['Sugar', 'kg', 44], ['Gingelly oil', 'L', 390]];
 const CALL_REMARKS = ['Interested, send price list', 'Positive, will order next week', 'Call back tomorrow', 'Not interested', 'Switched off', 'Busy, call later', 'Interested in 15 L oil', 'Already buying from others', 'No response', 'Asked for sample'];
 const HR_REMARKS = ['Interview scheduled tomorrow 11am', 'Joined today', 'Not interested, salary issue', 'No response', 'Driver arranged for Porur route', 'Called, will think', 'Relieved from work', 'Interview scheduled Monday'];
+const HR_BY_STATUS = {
+  called: 'Called, will think', scheduled: 'Interview scheduled tomorrow 11am', attended: 'Came for interview, good driving', selected: 'Selected, joining Monday',
+  joined: 'Joined today', no_show: 'Did not come for interview', not_interested: 'Not interested, salary issue', no_answer: 'No response',
+  driver_arranged: 'Driver arranged for Porur route', rejected: 'No licence'
+};
 const PEOPLE = ['Suresh', 'Priya', 'Arun', 'Karthik', 'Vijay', 'Divya', 'Manoj', 'Revathi', 'Prakash', 'Sathish', 'Keerthi'];
 const phone = () => String(rnd(6, 9)) + String(rnd(100000000, 999999999));
 
@@ -83,7 +89,7 @@ function seedDemo() {
         for (let c = 0; c < rnd(12, 30); c++) {
           const remarks = pick(CALL_REMARKS);
           const st = classifyCall(remarks);
-          records.push({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done' });
+          records.push({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done', duration: st === 'no_answer' ? 0 : rnd(25, 320) });
         }
         for (let o = 0; o < rnd(1, 5); o++) {
           const [product, unit, price] = pick(PRODUCTS);
@@ -98,9 +104,9 @@ function seedDemo() {
       }
       if (emp.roles.includes('hiring')) {
         for (let c = 0; c < rnd(6, 16); c++) {
-          const remarks = pick(HR_REMARKS);
-          const st = classifyHiring(remarks);
-          records.push({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done' });
+          const st = pick(['called', 'scheduled', 'scheduled', 'attended', 'selected', 'joined', 'no_show', 'not_interested', 'no_answer', 'driver_arranged', 'rejected']);
+          const remarks = HR_BY_STATUS[st];
+          records.push({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done', duration: st === 'no_answer' ? 0 : rnd(40, 400) });
         }
       }
       reports.push({
@@ -112,6 +118,24 @@ function seedDemo() {
         submittedAt: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18, rnd(0, 59)).toISOString()
       });
     }
+  });
+  // Call queue: open leads for each telecaller, a few numbers on do-not-call, and job openings
+  const AREAS2 = ['Tambaram', 'Velachery', 'Porur', 'Anna Nagar', 'Ambattur', 'T Nagar', 'Adyar'];
+  DEFAULT_EMPLOYEES.filter((e) => e.roles.includes('telecaller')).forEach((emp) => {
+    for (let k = 0; k < 18; k++) {
+      records.push({ id: `leads_${emp.id}_${n++}`, type_: 'leads', date: toISO(today), employeeId: emp.id, employee: emp.name, createdAt: new Date(Date.now() - k * 1000).toISOString(),
+        title: 'Ambattur shops', kind: 'sales', name: `${pick(SHOPS)} ${rnd(1, 99)}`, phone: phone(), area: pick(AREAS2), notes: k % 4 === 0 ? 'Big grocery, owner available after 4 PM' : '', state: 'open', result: '', doneAt: '', assignedBy: 'Naveen' });
+    }
+  });
+  DEFAULT_EMPLOYEES.filter((e) => e.roles.includes('hiring')).forEach((emp) => {
+    for (let k = 0; k < 6; k++) {
+      records.push({ id: `leads_${emp.id}_${n++}`, type_: 'leads', date: toISO(today), employeeId: emp.id, employee: emp.name, createdAt: new Date(Date.now() - k * 1000).toISOString(),
+        title: 'Driver applicants', kind: 'hiring', name: pick(PEOPLE), phone: phone(), area: pick(AREAS2), notes: 'Applied on Indeed', state: 'open', result: '', doneAt: '', assignedBy: 'Naveen' });
+    }
+  });
+  records.push({ id: `dnc_${n++}`, type_: 'dnc', date: toISO(today), employeeId: 'naveen', employee: 'Naveen', createdAt: today.toISOString(), name: 'Wrong number', phone: '9000000001', reason: 'Asked not to call' });
+  [['Driver', 30], ['Call driver', 40], ['Telecaller', 20], ['Delivery boy', 45]].forEach(([title, needed]) => {
+    records.push({ id: `openings_${n++}`, type_: 'openings', date: toISO(addDays(today, -20)), employeeId: 'naveen', employee: 'Naveen', createdAt: today.toISOString(), title, needed, active: 'yes' });
   });
   return { reports, records };
 }
@@ -169,7 +193,9 @@ export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } =
   if (IS_DEMO) {
     demoData().records.forEach((r) => {
       if (!out[r.type_]) return;
-      const ok = r.type_ === 'customers' ? (!employeeId || r.employeeId === employeeId) : inRange(r, from, to, employeeId);
+      const ok = r.type_ === 'dnc' || r.type_ === 'openings' ? true
+        : r.type_ === 'customers' || r.type_ === 'leads' ? (!employeeId || r.employeeId === employeeId)
+          : inRange(r, from, to, employeeId);
       if (ok) out[r.type_].push(r);
     });
   } else {
@@ -186,7 +212,8 @@ export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } =
 export async function saveRecords(type, rows, { date, employeeId, employee }) {
   const stamp = Date.now();
   const createdAt = new Date().toISOString();
-  const records = rows.map((r, i) => ({ ...r, id: `${type}_${employeeId}_${stamp}_${i}`, date, employeeId, employee, createdAt }));
+  // A row can carry its own employeeId/employee (e.g. leads assigned to someone else)
+  const records = rows.map((r, i) => ({ ...r, id: `${type}_${employeeId}_${stamp}_${i}`, date, employeeId: r.employeeId || employeeId, employee: r.employee || employee, createdAt }));
   if (IS_DEMO) {
     const { records: all } = demoData();
     let next = all;
@@ -220,6 +247,18 @@ export async function updateRecord(type, id, fields) {
   return post({ action: 'updateRecord', type, id, fields });
 }
 
+/** Several changes in one go: [{ id, fields }] — used for reassigning leads. */
+export async function updateRecords(type, updates) {
+  if (!updates.length) return true;
+  if (IS_DEMO) {
+    const map = new Map(updates.map((u) => [u.id, u.fields]));
+    const { records } = demoData();
+    lsSet(LS_RECORDS, records.map((r) => (map.has(r.id) ? { ...r, ...map.get(r.id) } : r)));
+    return true;
+  }
+  return post({ action: 'updateRecords', type, updates });
+}
+
 /**
  * Thanglish / rough notes → clear English. Returns { texts, engine }.
  * engine: 'claude' | 'gemini' (AI on the server), 'basic' (word list only), 'cache'.
@@ -246,8 +285,16 @@ export const DEFAULT_SETTINGS = {
   COMPANY_NAME: 'Sridhi Ventures',
   APP_LINK: '',
   FOLLOWUP_EMAILS: 'yes',
-  FOLLOWUP_DIGEST: 'no'
+  FOLLOWUP_DIGEST: 'no',
+  TARGETS: JSON.stringify(DEFAULT_TARGETS)
 };
+
+/** Daily targets for one person: their own numbers, else the team default. */
+export function targetsFor(settings, employeeId) {
+  let t = DEFAULT_TARGETS;
+  try { t = { ...DEFAULT_TARGETS, ...JSON.parse(settings?.TARGETS || '{}') }; } catch { /* keep defaults */ }
+  return { ...DEFAULT_TARGETS._default, ...(t._default || {}), ...(t[employeeId] || {}) };
+}
 
 export async function fetchSettings() {
   if (IS_DEMO) return { ...DEFAULT_SETTINGS, ...(lsGet(LS_SETTINGS) || {}) };

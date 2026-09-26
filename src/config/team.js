@@ -12,15 +12,48 @@ export const CALL_STATUSES = [
   { value: 'other', label: 'Other', tone: 'muted' }
 ];
 
+// `quick` = shown as a one-tap button when logging a new HR call; the rest appear as the candidate moves along
 export const HIRING_STATUSES = [
-  { value: 'scheduled', label: 'Interview scheduled', tone: 'blue', positive: true },
-  { value: 'joined', label: 'Joined', tone: 'good', positive: true },
-  { value: 'driver_arranged', label: 'Driver arranged', tone: 'good', positive: true },
-  { value: 'relieved', label: 'Relieved', tone: 'bad' },
-  { value: 'called', label: 'Called', tone: 'muted' },
-  { value: 'not_interested', label: 'Not interested', tone: 'bad' },
-  { value: 'no_answer', label: 'No answer', tone: 'muted' }
+  { value: 'scheduled', label: 'Interview scheduled', tone: 'blue', positive: true, quick: true },
+  { value: 'attended', label: 'Attended interview', tone: 'blue', positive: true },
+  { value: 'selected', label: 'Selected', tone: 'good', positive: true },
+  { value: 'joined', label: 'Joined', tone: 'good', positive: true, quick: true },
+  { value: 'working', label: 'Still working', tone: 'good' },
+  { value: 'driver_arranged', label: 'Driver arranged', tone: 'good', positive: true, quick: true },
+  { value: 'no_show', label: 'No-show', tone: 'bad' },
+  { value: 'rejected', label: 'Rejected', tone: 'bad' },
+  { value: 'relieved', label: 'Relieved', tone: 'bad', quick: true },
+  { value: 'called', label: 'Called', tone: 'muted', quick: true },
+  { value: 'not_interested', label: 'Not interested', tone: 'bad', quick: true },
+  { value: 'no_answer', label: 'No answer', tone: 'muted', quick: true }
 ];
+
+// Hiring pipeline stages (latest result of each candidate decides the stage)
+export const HIRING_STAGES = [
+  { key: 'contacted', label: 'Contacted', statuses: ['called', 'no_answer'] },
+  { key: 'scheduled', label: 'Scheduled', statuses: ['scheduled'] },
+  { key: 'attended', label: 'Attended', statuses: ['attended'] },
+  { key: 'selected', label: 'Selected', statuses: ['selected'] },
+  { key: 'joined', label: 'Joined', statuses: ['joined', 'working', 'driver_arranged'] },
+  { key: 'dropped', label: 'Dropped', statuses: ['no_show', 'rejected', 'not_interested', 'relieved'] }
+];
+
+// Lists that aren't daily work: the call queue, do-not-call numbers and job openings
+export const LIST_TYPES = {
+  leads: { cols: ['title', 'kind', 'name', 'phone', 'area', 'notes', 'state', 'result', 'doneAt', 'assignedBy'] },
+  dnc: { cols: ['name', 'phone', 'reason'] },
+  openings: { cols: ['title', 'needed', 'active'] }
+};
+
+// Daily targets used when nothing is set in Settings
+export const TARGET_METRICS = [
+  { key: 'calls_made', label: 'Calls', role: 'telecaller' },
+  { key: 'interested_calls', label: 'Interested', role: 'telecaller' },
+  { key: 'orders', label: 'Orders', role: 'telecaller' },
+  { key: 'hr_calls', label: 'HR calls', role: 'hiring' },
+  { key: 'scheduled', label: 'Interviews scheduled', role: 'hiring' }
+];
+export const DEFAULT_TARGETS = { _default: { calls_made: 50, interested_calls: 5, orders: 3, hr_calls: 40, scheduled: 5 } };
 
 export const CUSTOMER_TYPES = [
   { value: 'new', label: 'New', tone: 'good' },
@@ -31,7 +64,7 @@ export const CUSTOMER_TYPES = [
 export const RECORD_TYPES = {
   calls: {
     label: 'Customer calls', short: 'Calls', noun: 'calls', verb: 'Import calls',
-    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'],
+    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp', 'duration'],
     statuses: CALL_STATUSES,
     titleHint: 'What is this call list for?',
     titles: ['Sales', 'Distributor hiring', 'Retail follow-up', 'New leads'],
@@ -61,7 +94,7 @@ export const RECORD_TYPES = {
   },
   hiring: {
     label: 'Hiring calls', short: 'HR calls', noun: 'HR calls', verb: 'Import HR calls',
-    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'],
+    cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp', 'duration'],
     statuses: HIRING_STATUSES,
     titleHint: 'Which position are you hiring for?',
     titles: ['Driver', 'Call driver', 'Telecaller', 'Delivery boy', 'Distributor'],
@@ -71,7 +104,7 @@ export const RECORD_TYPES = {
 
 export const COL_LABELS = {
   title: 'Title', name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
-  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position', followUp: 'Follow-up'
+  qty: 'Qty', unit: 'Unit', amount: 'Amount (₹)', area: 'Area', type: 'Type', reason: 'Reason', position: 'Position', followUp: 'Follow-up', duration: 'Talk time (s)'
 };
 
 export const ROLES = {
@@ -116,9 +149,13 @@ export const SNAPSHOT = [
   { key: 'customers_added', label: 'Customers added', role: 'telecaller' },
   { key: 'hr_calls', label: 'HR calls', role: 'hiring' },
   { key: 'scheduled', label: 'Interviews scheduled', role: 'hiring', good: true },
+  { key: 'attended', label: 'Attended interview', role: 'hiring', good: true },
+  { key: 'no_shows', label: 'Interview no-shows', role: 'hiring', bad: true },
+  { key: 'selected', label: 'Selected', role: 'hiring', good: true },
   { key: 'joined', label: 'Joined', role: 'hiring', good: true },
   { key: 'drivers_arranged', label: 'Drivers arranged', role: 'hiring', good: true },
-  { key: 'relieved', label: 'Relieved', role: 'hiring', bad: true }
+  { key: 'relieved', label: 'Relieved', role: 'hiring', bad: true },
+  { key: 'talk_mins', label: 'Talk time (min)', role: 'telecaller' }
 ];
 
 export const DEFAULT_EMPLOYEES = [

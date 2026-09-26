@@ -1,5 +1,5 @@
 /**
- * TEAM PULSE — Google Sheets backend  (v5: CRM follow-ups, reminder emails, Thanglish → English)
+ * TEAM PULSE — Google Sheets backend  (v6: call queue, do-not-call, hiring pipeline, targets, talk time)
  * ------------------------------------------------------------
  * FIRST TIME
  * 1. Create a Google Sheet → Extensions → Apps Script.
@@ -32,17 +32,24 @@ var BASE_HEADERS = ['id', 'date', 'employeeId', 'name', 'roles', 'submittedAt', 
 // Bulk-imported data: one tab per type. Extra columns are added automatically.
 var RECORD_BASE = ['id', 'date', 'employeeId', 'employee', 'createdAt'];
 var RECORD_SHEETS = {
-  calls: { sheet: 'Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'] },
+  calls: { sheet: 'Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp', 'duration'] },
   orders: { sheet: 'Orders', cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount'] },
   customers: { sheet: 'Customers', cols: ['title', 'name', 'phone', 'area', 'type'] },
   cancellations: { sheet: 'Cancellations', cols: ['title', 'name', 'phone', 'product', 'qty', 'unit', 'amount', 'reason'] },
-  hiring: { sheet: 'HR Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp'] }
+  hiring: { sheet: 'HR Calls', cols: ['title', 'name', 'phone', 'remarks', 'status', 'followUp', 'duration'] },
+  // Call queue (employeeId = who should call), do-not-call numbers, job openings
+  leads: { sheet: 'Leads', cols: ['title', 'kind', 'name', 'phone', 'area', 'notes', 'state', 'result', 'doneAt', 'assignedBy'] },
+  dnc: { sheet: 'Do Not Call', cols: ['name', 'phone', 'reason'] },
+  openings: { sheet: 'Openings', cols: ['title', 'needed', 'active'] }
 };
-var NUMERIC_COLS = ['qty', 'amount'];
+// These are lists, not daily work: always read in full (no date filter)
+var UNDATED_TYPES = ['customers', 'leads', 'dnc', 'openings'];
+var NUMERIC_COLS = ['qty', 'amount', 'duration', 'needed'];
 var STATUS_LABELS = {
   interested: 'Interested', callback: 'Call back', not_interested: 'Not interested', no_answer: 'No answer', other: 'Other',
   scheduled: 'Interview scheduled', joined: 'Joined', driver_arranged: 'Driver arranged', relieved: 'Relieved', called: 'Called',
-  'new': 'New', existing: 'Existing'
+  'new': 'New', existing: 'Existing',
+  attended: 'Attended interview', selected: 'Selected', working: 'Still working', no_show: 'No-show', rejected: 'Rejected'
 };
 var SETTINGS_DEFAULTS = [
   ['MANAGEMENT_EMAILS', DEFAULT_EMAIL, 'Comma-separated emails that receive EOD reports (can be changed in the app)'],
@@ -50,7 +57,8 @@ var SETTINGS_DEFAULTS = [
   ['COMPANY_NAME', 'Sridhi Ventures', 'Shown at the top of every email'],
   ['APP_LINK', '', 'Your app link, for the "Open dashboard" button in emails'],
   ['FOLLOWUP_EMAILS', 'yes', 'yes = every morning, email each person their follow-ups (needs their email in the Employees tab)'],
-  ['FOLLOWUP_DIGEST', 'no', 'yes = also email management the list of overdue follow-ups each morning']
+  ['FOLLOWUP_DIGEST', 'no', 'yes = also email management the list of overdue follow-ups each morning'],
+  ['TARGETS', '{"_default":{"calls_made":50,"interested_calls":5,"orders":3,"hr_calls":40,"scheduled":5}}', 'Daily targets (edit in the app: Settings → Daily targets)']
 ];
 
 // ── One-time setup (safe to run again) ────────────────────────
@@ -142,7 +150,8 @@ function doGet(e) {
     if (p.action === 'records') {
       var out = {};
       String(p.types || Object.keys(RECORD_SHEETS).join(',')).split(',').forEach(function (t) {
-        if (RECORD_SHEETS[t]) out[t] = getRecords(t, t === 'customers' ? '' : p.from, t === 'customers' ? '' : p.to, p.employeeId);
+        var undated = UNDATED_TYPES.indexOf(t) !== -1;
+        if (RECORD_SHEETS[t]) out[t] = getRecords(t, undated ? '' : p.from, undated ? '' : p.to, p.employeeId);
       });
       return json(ok(out));
     }
@@ -160,6 +169,7 @@ function doPost(e) {
     if (body.action === 'saveRecords') return json(ok(saveRecords(body.type, body.records || [])));
     if (body.action === 'deleteRecord') return json(ok(deleteRecord(body.type, body.id)));
     if (body.action === 'updateRecord') return json(ok(updateRecord(body.type, body.id, body.fields || {})));
+    if (body.action === 'updateRecords') return json(ok(updateRecords(body.type, body.updates || [])));
     if (body.action === 'polish') return json(ok(polishTexts(body.texts || [])));
     if (body.action === 'saveMyEmail') return json(ok(saveMyEmail(body.employeeId, body.pin, body.email)));
     if (body.action === 'sendMyFollowUps') return json(ok(sendMyFollowUps(body.employeeId)));
@@ -211,6 +221,12 @@ function saveSettings(employeeId, pin, settings) {
   if (settings.COMPANY_NAME !== undefined) setSetting('COMPANY_NAME', String(settings.COMPANY_NAME).slice(0, 80));
   if (settings.APP_LINK !== undefined) setSetting('APP_LINK', String(settings.APP_LINK).slice(0, 300));
   if (settings.FOLLOWUP_EMAILS !== undefined) setSetting('FOLLOWUP_EMAILS', String(settings.FOLLOWUP_EMAILS) === 'no' ? 'no' : 'yes');
+  if (settings.TARGETS !== undefined) {
+    var t;
+    try { t = JSON.parse(String(settings.TARGETS)); } catch (e) { throw new Error('Targets could not be read'); }
+    if (!t || typeof t !== 'object') throw new Error('Targets could not be read');
+    setSetting('TARGETS', JSON.stringify(t).slice(0, 5000));
+  }
   if (settings.FOLLOWUP_DIGEST !== undefined) setSetting('FOLLOWUP_DIGEST', String(settings.FOLLOWUP_DIGEST) === 'yes' ? 'yes' : 'no');
   return getSettings();
 }
@@ -369,7 +385,7 @@ function saveRecords(type, records) {
     if (rows.length) {
       var start = sh.getLastRow() + 1;
       sh.getRange(start, headers.indexOf('date') + 1, rows.length, 1).setNumberFormat('@');
-      sh.getRange(start, phoneIdx + 1, rows.length, 1).setNumberFormat('@');
+      if (phoneIdx !== -1) sh.getRange(start, phoneIdx + 1, rows.length, 1).setNumberFormat('@');
       var fuIdx = headers.indexOf('followUp');
       if (fuIdx !== -1) sh.getRange(start, fuIdx + 1, rows.length, 1).setNumberFormat('@');
       sh.getRange(start, 1, rows.length, headers.length).setValues(rows);
@@ -472,8 +488,9 @@ function countsFor(d) {
     calls: d.calls.length, interested: 0, callbacks: 0,
     orders: d.orders.length, sales: 0, kg: 0, litres: 0,
     cancelled: d.cancellations.length, cancelledValue: 0, customersAdded: d.customers.length,
-    hrCalls: d.hiring.length, scheduled: 0, joined: 0, drivers: 0, relieved: 0
+    hrCalls: d.hiring.length, scheduled: 0, joined: 0, drivers: 0, relieved: 0, attended: 0, noShow: 0, selected: 0, talk: 0
   };
+  d.calls.concat(d.hiring).forEach(function (r) { c.talk += Number(r.duration) || 0; });
   d.calls.forEach(function (r) { if (r.status === 'interested') c.interested++; if (r.status === 'callback') c.callbacks++; });
   d.orders.forEach(function (r) {
     c.sales += Number(r.amount) || 0;
@@ -486,6 +503,9 @@ function countsFor(d) {
     if (r.status === 'joined') c.joined++;
     if (r.status === 'driver_arranged') c.drivers++;
     if (r.status === 'relieved') c.relieved++;
+    if (r.status === 'attended') c.attended++;
+    if (r.status === 'no_show') c.noShow++;
+    if (r.status === 'selected') c.selected++;
   });
   return c;
 }
@@ -597,6 +617,10 @@ function renderEmail(o) {
   if (c.joined) extra.push(pill(c.joined + ' joined', C.good, C.goodBg));
   if (c.drivers) extra.push(pill(c.drivers + ' drivers arranged', C.good, C.goodBg));
   if (c.relieved) extra.push(pill(c.relieved + ' relieved', C.bad, '#FBE7E5'));
+  if (c.attended) extra.push(pill(c.attended + ' attended interview', C.blue, C.blueBg));
+  if (c.noShow) extra.push(pill(c.noShow + ' interview no-show' + (c.noShow === 1 ? '' : 's'), C.bad, '#FBE7E5'));
+  if (c.selected) extra.push(pill(c.selected + ' selected', C.good, C.goodBg));
+  if (c.talk >= 60) extra.push(pill('Talk time ' + Math.floor(c.talk / 3600) + 'h ' + Math.round((c.talk % 3600) / 60) + 'm', C.ink, C.mist));
   if (c.cancelled) extra.push(pill(c.cancelled + ' orders cancelled (' + inr(c.cancelledValue) + ')', C.bad, '#FBE7E5'));
   if (c.customersAdded) extra.push(pill(c.customersAdded + ' customers added', C.ink, C.mist));
   if (extra.length) body += '<div style="margin-top:22px;">' + extra.join('') + '</div>';
@@ -729,7 +753,7 @@ function sendTestEmail() { sendDailySummary(); }
 // ══════════════════════════════════════════════════════════════
 //  CRM: FOLLOW-UPS
 // ══════════════════════════════════════════════════════════════
-var EDITABLE_FIELDS = ['followUp', 'status', 'remarks'];
+var EDITABLE_FIELDS = ['followUp', 'status', 'remarks', 'state', 'result', 'doneAt', 'employeeId', 'employee', 'needed', 'active'];
 
 /** Change a saved entry (reschedule / close a follow-up). */
 function updateRecord(type, id, fields) {
@@ -1067,4 +1091,46 @@ function polishBasic_(t) {
   if (!s) return t;
   s = s.charAt(0).toUpperCase() + s.slice(1);
   return /[.!?]$/.test(s) ? s : s + '.';
+}
+
+
+// ══════════════════════════════════════════════════════════════
+//  CALL QUEUE: several changes at once (reassigning, closing a list)
+// ══════════════════════════════════════════════════════════════
+function updateRecords(type, updates) {
+  var sh = recordSheet(type);
+  updates = (updates || []).slice(0, 2000);
+  if (!updates.length) return 0;
+  var keys = {};
+  updates.forEach(function (u) { Object.keys(u.fields || {}).forEach(function (k) { if (EDITABLE_FIELDS.indexOf(k) !== -1) keys[k] = true; }); });
+  keys = Object.keys(keys);
+  if (!keys.length) throw new Error('Nothing to change');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var headers = ensureHeaders(sh, keys);
+    var last = sh.getLastRow();
+    if (last < 2) return 0;
+    var ids = sh.getRange(2, 1, last - 1, 1).getDisplayValues();
+    var rowOf = {};
+    ids.forEach(function (r, i) { rowOf[r[0]] = i + 2; });
+    // Write each changed column in one go
+    var changed = 0;
+    keys.forEach(function (k) {
+      var col = headers.indexOf(k) + 1;
+      var range = sh.getRange(2, col, last - 1, 1);
+      range.setNumberFormat('@');
+      var vals = range.getValues();
+      var touched = false;
+      updates.forEach(function (u) {
+        if (!u.fields || u.fields[k] === undefined || !rowOf[u.id]) return;
+        vals[rowOf[u.id] - 2][0] = String(u.fields[k] == null ? '' : u.fields[k]).slice(0, 500);
+        touched = true;
+      });
+      if (touched) { range.setValues(vals); changed++; }
+    });
+    return changed;
+  } finally {
+    lock.releaseLock();
+  }
 }

@@ -67,6 +67,18 @@ The Today screen is built so people log work as it happens and the report writes
   - **Morning email (about 9 AM, Mon–Sat)** to each person: overdue, today and the next 3 days, with tap-to-call, WhatsApp and calendar links. Each person saves their email on the Contacts page (PIN needed), or fill the `email` column in the Employees tab. Admins can also send management a daily overdue list (Email settings).
 - **✨ English button** on remarks and every notes box: turns Thanglish or rough English into clear English, with Undo. *Convert remarks to English* on the bulk-import preview does a whole list at once. *Speak* now has an **EN / தமிழ்** switch — speak Tamil, then tap English.
 
+## Call queue, hiring pipeline, targets & auto call log
+
+- **Auto call log.** Tap **Call** anywhere in the app (Today, a lead, a follow-up, a contact, a candidate). The phone dialer opens; when you come back, the app asks *How did the call go?* with the talk time already measured. Tap the result — it's logged, with the follow-up, and the next lead is ready. On the Today screen you can also type a number and tap **Call now**.
+- **Call queue.** Admins open **Call queue** (Leads), paste or upload a list (name, number, area, notes), and pick who calls it — it's split evenly. Before assigning, the app removes repeats in the list, numbers already in someone's queue, do-not-call numbers, existing customers and numbers called in the last 30 days. Each person sees one big *next call* card on Today with Call, WhatsApp, Skip and *Don't call*. Admins see progress per list and person, can move someone's uncalled leads to another person, or remove the uncalled ones.
+- **Duplicate warning.** Typing a number shows who called it last and what happened ("Thulasi called Ramesh Traders 2 days ago · Interested"), and blocks numbers on the **do-not-call list**.
+- **Hiring pipeline.** Candidates move Contacted → Scheduled → Attended → Selected → Joined (or Dropped). After an interview date the follow-up asks *Did they come?* (Attended / No-show). Selected people get a *Confirm joining* follow-up, and joiners get a day-7 check-in (*Still working* / *Relieved*). The page shows the funnel, the **show-up rate** and no-shows, and **open positions** with headcount (e.g. Driver 2/5 filled).
+- **Targets & performance.** Admins set daily targets (Settings → Daily targets; per person or for everyone). Everyone sees progress bars on Today. The **Performance** page shows sales and hiring funnels, talk time, **follow-ups called on time**, days the target was hit, a day-by-day chart, a leaderboard, and a **PDF** report per person or the team.
+
+### After updating Code.gs for this version
+
+Paste the new `Code.gs`, run **setup** once (it adds the *Leads*, *Do Not Call* and *Openings* tabs and the new columns), then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**.
+
 ### Turning on the reminder emails and the English button
 
 1. Paste the new `apps-script/Code.gs` into Apps Script and save.

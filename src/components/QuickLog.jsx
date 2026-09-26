@@ -7,6 +7,9 @@ import { recentTitles, rememberTitle } from '../lib/titles';
 import { followUpFor, parseWhen } from '../lib/followup';
 import FollowUpPicker from './FollowUpPicker';
 import PolishButton from './PolishButton';
+import CallButton from './CallButton';
+import { dupeInfo } from '../lib/teamIndex';
+import { RECORDS_SAVED, onEvent } from '../lib/events';
 
 const UNITS = ['kg', 'L', 'pcs', 'box', 'bag', 'g', 'ml'];
 
@@ -32,7 +35,7 @@ const blank = (type) => ({ name: '', phone: '', remarks: '', product: '', qty: '
  * Log one call / order / candidate at a time, the moment it happens.
  * For calls and HR calls, tapping the outcome saves the entry — no Save button needed.
  */
-export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved, notify }) {
+export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved, notify, teamIdx }) {
   const def = RECORD_TYPES[type];
   const fields = FIELDS[type];
   const tapToSave = type === 'calls' || type === 'hiring';
@@ -55,6 +58,12 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
 
   const phone = normalisePhone(v.phone);
   const dupe = phone.length === 10 && dayRows.some((r) => r.phone === phone);
+  const warn = dupeInfo(teamIdx, phone, user.id);
+
+  // A call made with the Call button and logged from the result sheet clears this form
+  useEffect(() => onEvent(RECORDS_SAVED, ({ records }) => {
+    setV((cur) => (records.some((r) => r.phone && r.phone === normalisePhone(cur.phone)) ? blank(type) : cur));
+  }), [type]);
   const set = (k) => (e) => setV((x) => ({ ...x, [k]: e.target.value }));
 
   const save = async (status) => {
@@ -159,7 +168,14 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
       </div>
 
       <div className={`ql-fields ql-${type}`}>{fields.map(input)}</div>
-      {dupe && <p className="hint" style={{ color: '#87540a' }}>You already logged this number today — saving again adds a second entry.</p>}
+      {warn && <div className={`dupe dupe-${warn.tone}`}>{warn.text}</div>}
+      {dupe && !warn && <p className="hint" style={{ color: '#87540a' }}>You already logged this number today — saving again adds a second entry.</p>}
+      {tapToSave && phone.length === 10 && !warn?.tone?.startsWith('bad') && (
+        <div className="ql-callrow">
+          <CallButton className="btn btn-primary btn-sm" label="Call now" call={{ type, name: v.name.trim(), phone, title }} />
+          <span className="hint" style={{ margin: 0 }}>Come back after the call — the app will ask how it went.</span>
+        </div>
+      )}
 
       {type === 'customers' && (
         <div className="ql-status">
@@ -175,7 +191,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
             label={type === 'hiring' ? 'Interview / follow up' : 'Follow up'} />
           <p className="ql-cue">Tap the result to save</p>
           <div className="ql-status">
-            {def.statuses.map((s) => (
+            {def.statuses.filter((s) => type !== 'hiring' || s.quick).map((s) => (
               <button key={s.value} type="button" className={`ql-btn tone-${s.tone}`} onClick={() => save(s.value)}>{s.label}</button>
             ))}
           </div>

@@ -8,7 +8,26 @@
 import { toISO, fromISO, addDays, todayISO } from './date';
 
 // Results that get a follow-up, and how many days later by default
-export const FOLLOWUP_DEFAULT_DAYS = { callback: 1, interested: 2, scheduled: 1 };
+export const FOLLOWUP_DEFAULT_DAYS = { callback: 1, interested: 2, scheduled: 1, attended: 2, selected: 2, joined: 7, no_show: 1 };
+
+/** What to offer next on a follow-up, based on where the person is now. */
+export function nextSteps(type, status) {
+  if (type === 'calls') return ['interested', 'callback', 'not_interested', 'no_answer'];
+  switch (status) {
+    case 'scheduled': return ['attended', 'no_show', 'not_interested'];
+    case 'attended': return ['selected', 'rejected', 'not_interested'];
+    case 'selected': return ['joined', 'not_interested', 'no_answer'];
+    case 'joined': return ['working', 'relieved'];
+    case 'no_show': return ['scheduled', 'not_interested', 'no_answer'];
+    default: return ['scheduled', 'joined', 'not_interested', 'no_answer'];
+  }
+}
+
+/** A short reason shown on each follow-up, e.g. "Did they come?" */
+export function followUpPrompt(type, status) {
+  if (type !== 'hiring') return '';
+  return { scheduled: 'Did they come for the interview?', attended: 'Decision after interview', selected: 'Confirm joining', joined: 'Joining check-in', no_show: 'Reschedule the interview' }[status] || '';
+}
 export const needsFollowUp = (status) => status in FOLLOWUP_DEFAULT_DAYS;
 
 const DAY_WORDS = [
@@ -207,3 +226,22 @@ export function downloadIcs(items) {
 }
 
 export const waLink = (phone, text = '') => `https://wa.me/91${String(phone).slice(-10)}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
+
+// ── Hiring funnel: each candidate counts at the furthest stage they reached ──
+const RANK = { scheduled: 1, no_show: 1, attended: 2, rejected: 2, selected: 3, joined: 4, working: 4, driver_arranged: 4 };
+export function hiringFunnel(list) {
+  const best = new Map();
+  let noShow = new Set();
+  list.forEach((r) => {
+    const key = r.phone || `n:${String(r.name || '').toLowerCase()}`;
+    const rank = RANK[r.status] || 0;
+    if (rank > (best.get(key) || 0)) best.set(key, rank);
+    if (r.status === 'no_show') noShow.add(key);
+  });
+  // A no-show who later attended isn't a no-show any more
+  noShow = [...noShow].filter((k) => (best.get(k) || 0) < 2);
+  const reached = (n) => [...best.values()].filter((v) => v >= n).length;
+  const f = { calls: list.length, scheduled: reached(1), attended: reached(2), selected: reached(3), joined: reached(4), noShow: noShow.length };
+  f.showUp = f.attended + f.noShow ? Math.round((f.attended / (f.attended + f.noShow)) * 100) : null;
+  return f;
+}

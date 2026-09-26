@@ -3,10 +3,11 @@ import { Mail, Save, Loader2, Send, Lock } from 'lucide-react';
 import { fetchSettings, saveSettings, emailEODNow, IS_DEMO } from '../lib/api';
 import { todayISO } from '../lib/date';
 import { Loading } from '../components/ui';
+import { TARGET_METRICS, DEFAULT_TARGETS } from '../config/team';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function SettingsPage({ user, notify }) {
+export default function SettingsPage({ user, employees = [], notify }) {
   const [s, setS] = useState(null);
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
@@ -17,6 +18,15 @@ export default function SettingsPage({ user, notify }) {
   }, [notify]);
 
   if (!s) return <div className="page"><Loading text="Loading settings…" /></div>;
+
+  let targets = DEFAULT_TARGETS;
+  try { targets = { ...DEFAULT_TARGETS, ...JSON.parse(s.TARGETS || '{}') }; } catch { /* defaults */ }
+  const setTarget = (who, key, val) => {
+    const next = { ...targets, [who]: { ...(targets[who] || {}) } };
+    if (val === '') delete next[who][key]; else next[who][key] = Number(val) || 0;
+    setS({ ...s, TARGETS: JSON.stringify(next) });
+  };
+  const staff = employees.filter((e) => !e.viewOnly && e.roles.some((r) => r === 'telecaller' || r === 'hiring'));
 
   const emails = String(s.MANAGEMENT_EMAILS || '').split(',').map((x) => x.trim()).filter(Boolean);
   const bad = emails.filter((e) => !EMAIL_RE.test(e));
@@ -92,6 +102,32 @@ export default function SettingsPage({ user, notify }) {
             <label className="label" htmlFor="st-link">App link (for the “Open dashboard” button)</label>
             <input id="st-link" className="input" value={s.APP_LINK || ''} onChange={(e) => setS({ ...s, APP_LINK: e.target.value })} placeholder="https://your-app.netlify.app" />
           </div>
+        </div>
+
+        <div>
+          <span className="label">Daily targets</span>
+          <div className="table-wrap" style={{ margin: 0 }}>
+            <table className="table compact targets-table">
+              <thead><tr><th>Who</th>{TARGET_METRICS.map((m) => <th key={m.key}>{m.label}</th>)}</tr></thead>
+              <tbody>
+                {[{ id: '_default', name: 'Everyone (default)', roles: ['telecaller', 'hiring'] }, ...staff].map((e) => (
+                  <tr key={e.id}>
+                    <td><b>{e.name}</b></td>
+                    {TARGET_METRICS.map((m) => (
+                      <td key={m.key}>
+                        {e.roles.includes(m.role) ? (
+                          <input className="input target-input" inputMode="numeric" aria-label={`${e.name} ${m.label} target`}
+                            placeholder={e.id === '_default' ? '' : String(targets._default?.[m.key] ?? '')}
+                            value={targets[e.id]?.[m.key] ?? ''} onChange={(ev) => setTarget(e.id, m.key, ev.target.value.replace(/\D/g, ''))} />
+                        ) : <span className="muted">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint">Leave a person’s box empty to use the default. Targets show as progress bars on everyone’s Today screen.</p>
         </div>
 
         <div className="pin-confirm">

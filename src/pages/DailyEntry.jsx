@@ -8,7 +8,12 @@ import FollowUps from '../components/FollowUps';
 import PolishButton from '../components/PolishButton';
 import { openFollowUps, bucketOf } from '../lib/followup';
 import VoiceButton from '../components/VoiceButton';
-import { fetchReports, saveReport, fetchRecords, deleteRecord } from '../lib/api';
+import { fetchReports, saveReport, fetchRecords, deleteRecord, fetchSettings, targetsFor, TYPE_KEYS } from '../lib/api';
+import CallQueue from '../components/CallQueue';
+import { useTeamIndex } from '../lib/teamIndex';
+import { RECORDS_SAVED, LEAD_CHANGED, onEvent } from '../lib/events';
+import { TARGET_METRICS } from '../config/team';
+import { fmtDuration } from '../lib/callLog';
 import { eodText } from '../lib/reports';
 import { statsFor, recordsOnDate, fmtQty } from '../lib/stats';
 import { toISO, todayISO, fromISO, addDays } from '../lib/date';
@@ -71,7 +76,7 @@ export function Tiles({ items, stats }) {
   );
 }
 
-function RoleRecords({ roleKey, dayRecs, date, user, onImport, onDelete, onAdded, onRemoved, notify }) {
+function RoleRecords({ roleKey, dayRecs, date, user, onImport, onDelete, onAdded, onRemoved, notify, teamIdx }) {
   const types = ROLES[roleKey].imports;
   const [tab, setTab] = useState(types[0]);
   const [showList, setShowList] = useState(false);
@@ -84,7 +89,7 @@ function RoleRecords({ roleKey, dayRecs, date, user, onImport, onDelete, onAdded
             options={types.map((t) => ({ value: t, label: `${RECORD_TYPES[t].short}${(dayRecs[t] || []).length ? ` · ${dayRecs[t].length}` : ''}` }))} />
         </div>
       )}
-      <QuickLog type={tab} date={date} user={user} dayRows={rows} onAdded={onAdded} onRemoved={onRemoved} notify={notify} />
+      <QuickLog type={tab} date={date} user={user} dayRows={rows} onAdded={onAdded} onRemoved={onRemoved} notify={notify} teamIdx={teamIdx} />
 
       <div className="ql-foot">
         <button className="btn btn-ghost btn-sm" onClick={() => onImport(tab)}><ClipboardList size={16} /> Paste a whole list</button>
@@ -139,7 +144,7 @@ export default function DailyEntry({ user, notify, onDue }) {
   const loadRecords = useCallback(() => {
     if (!hasImports) { setRecords({}); return; }
     // The last 45 days are loaded too, so open follow-ups show up (reports only use this day's entries)
-    fetchRecords({ employeeId: user.id, from: toISO(addDays(fromISO(date), -45)), to: date })
+    fetchRecords({ types: [...TYPE_KEYS, 'leads'], employeeId: user.id, from: toISO(addDays(fromISO(date), -45)), to: date })
       .then(setRecords)
       .catch((e) => { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); });
   }, [user.id, date, hasImports, notify]);
@@ -188,6 +193,15 @@ export default function DailyEntry({ user, notify, onDue }) {
 
   const streak = useMemo(() => calcStreak((history || []).map((r) => r.date)), [history]);
   const dayRecs = useMemo(() => (records ? recordsOnDate(records, date) : {}), [records, date]);
+  const callRoles = user.roles.some((r) => r === 'telecaller' || r === 'hiring');
+  const teamIdx = useTeamIndex(callRoles);
+  const [settings, setSettings] = useState(null);
+  useEffect(() => { if (callRoles) fetchSettings().then(setSettings).catch(() => setSettings({})); }, [callRoles]);
+  const targets = useMemo(() => targetsFor(settings, user.id), [settings, user.id]);
+
+  // Calls logged from the call-result sheet, and leads finished there, appear here straight away
+  useEffect(() => onEvent(RECORDS_SAVED, ({ type, records: recs }) => { if (type !== 'dnc') addLocal(type, recs); }), [addLocal]);
+  useEffect(() => onEvent(LEAD_CHANGED, ({ id, fields }) => updateLocal('leads', id, fields)), [updateLocal]);
   const stats = useMemo(() => statsFor(dayRecs, { from: date, to: date }), [dayRecs, date]);
 
   const setNote = (k, v) => setForm((f) => ({ ...f, notes: { ...f.notes, [k]: v } }));
@@ -252,7 +266,13 @@ export default function DailyEntry({ user, notify, onDue }) {
         </div>
       </section>
 
+      {callRoles && date === todayISO() && <Targets user={user} stats={stats} targets={targets} />}
+
       <FollowUps items={followUps} date={date} user={user} onAdded={addLocal} onUpdated={updateLocal} notify={notify} />
+
+      {date === todayISO() && records?.leads?.length > 0 && (
+        <CallQueue user={user} leads={records.leads} teamIdx={teamIdx} notify={notify} onLeadChanged={(id, fields) => updateLocal('leads', id, fields)} />
+      )}
 
       {user.roles.map((roleKey) => {
         const role = ROLES[roleKey];
@@ -270,7 +290,7 @@ export default function DailyEntry({ user, notify, onDue }) {
             <div className="section-body">
               {TILES[roleKey] && <Tiles items={TILES[roleKey]} stats={stats} />}
               {role.imports.length > 0 && (
-                <RoleRecords roleKey={roleKey} dayRecs={dayRecs} date={date} user={user} notify={notify}
+                <RoleRecords roleKey={roleKey} dayRecs={dayRecs} date={date} user={user} notify={notify} teamIdx={teamIdx}
                   onImport={setImporting} onDelete={removeRecord} onAdded={addLocal} onRemoved={removeLocal} />
               )}
               {role.text.map((f) => (
@@ -342,6 +362,33 @@ export default function DailyEntry({ user, notify, onDue }) {
 
       {importing && <BulkImport type={importing} date={date} user={user} notify={notify} onClose={() => setImporting(null)} onSaved={loadRecords} />}
       {done && <SubmittedSheet report={done} dayRecs={dayRecs} onClose={() => setDone(null)} notify={notify} />}
+    </div>
+  );
+}
+
+/** Today's targets as progress bars, plus talk time */
+function Targets({ user, stats, targets }) {
+  const metrics = TARGET_METRICS.filter((m) => user.roles.includes(m.role) && Number(targets[m.key]) > 0);
+  if (!metrics.length) return null;
+  const hit = metrics.filter((m) => (stats[m.key] || 0) >= Number(targets[m.key])).length;
+  return (
+    <div className="targets">
+      <div className="targets-head">
+        <b>Today’s targets</b>
+        <span className="muted">{hit === metrics.length ? 'All targets hit — superb!' : `${hit} of ${metrics.length} hit`}{stats.talk_mins ? ` · talk time ${fmtDuration(stats.talk_mins * 60)}` : ''}</span>
+      </div>
+      <div className="targets-grid">
+        {metrics.map((m) => {
+          const v = stats[m.key] || 0, t = Number(targets[m.key]);
+          const pct = Math.min(100, Math.round((v / t) * 100));
+          return (
+            <div key={m.key} className={`target ${v >= t ? 'done' : ''}`}>
+              <div className="target-top"><span>{m.label}</span><b>{v}<small>/{t}</small></b></div>
+              <div className="target-bar"><span style={{ width: `${pct}%` }} /></div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

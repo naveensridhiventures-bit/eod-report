@@ -2,15 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Phone, BellRing, Bell, BellOff, CalendarPlus, Mail, MessageCircle, Clock3, Check, Loader2, ChevronDown } from 'lucide-react';
 import { RECORD_TYPES } from '../config/team';
 import { saveRecords, updateRecord, emailMyFollowUps, IS_DEMO } from '../lib/api';
-import { bucketOf, whenLabel, quickDates, calendarLink, downloadIcs, waLink, followUpFor, fuDate } from '../lib/followup';
+import { bucketOf, whenLabel, quickDates, calendarLink, downloadIcs, waLink, followUpFor, fuDate, nextSteps, followUpPrompt } from '../lib/followup';
+import CallButton from './CallButton';
 import { enableNotifications, notifyOn, notifySupported, scheduleReminders } from '../lib/reminders';
 import { todayISO, toISO, addDays } from '../lib/date';
 
-// Results offered on a follow-up (short, so they fit one row on a phone)
-const QUICK = {
-  calls: ['interested', 'callback', 'not_interested', 'no_answer'],
-  hiring: ['joined', 'scheduled', 'not_interested', 'no_answer']
-};
 
 export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
   const [busy, setBusy] = useState(false);
@@ -51,14 +47,15 @@ export function FollowUpItem({ r, date, user, onAdded, onUpdated, notify }) {
           {r.title && <span className="title-tag">{r.title}</span>}
           <span className={`fu-when ${late ? 'late' : ''}`}><Clock3 size={12} /> {whenLabel(r.fu)}</span>
         </div>
+        {followUpPrompt(r.type_, r.status) && <div className="fu-prompt">{followUpPrompt(r.type_, r.status)}</div>}
         {r.remarks && <div className="fu-meta">{r.remarks}</div>}
       </div>
       <div className="fu-contact">
-        {r.phone && <a className="btn btn-ghost btn-sm" href={`tel:${r.phone}`}><Phone size={15} /> Call</a>}
+        {r.phone && <CallButton className="btn btn-ghost btn-sm" call={{ type: r.type_, name: r.name, phone: r.phone, title: r.title, options: nextSteps(r.type_, r.status), prev: r.status }} />}
         {r.phone && <a className="icon-btn" href={waLink(r.phone)} target="_blank" rel="noreferrer" aria-label="WhatsApp"><MessageCircle size={17} /></a>}
       </div>
       <div className="fu-actions">
-        {QUICK[r.type_].map((s) => {
+        {nextSteps(r.type_, r.status).map((s) => {
           const st = statuses.find((x) => x.value === s);
           return <button key={s} className={`ql-btn sm tone-${st.tone}`} disabled={busy} onClick={() => logResult(s)}>{st.label}</button>;
         })}
