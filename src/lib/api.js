@@ -4,7 +4,7 @@ import { classifyCall, classifyHiring } from './parse';
 import { isFollowup, withHistory, recompute } from './history';
 
 // Live Google Apps Script web app. A VITE_SHEETS_API_URL in .env overrides it.
-const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxGZjbgjTQjfi3LhKJ1h7EfUbgYtv8cvvvwR-4G_C5WdEakyq9HfU8PrtEAb6qOs_WnWg/exec';
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbw958S4G-UU3yKN4MCGrr4Oo3NmeGTqBHrY9llzEZuGuhwRjy3E_kkTJ4sEJ82l8x1DOQ/exec';
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
