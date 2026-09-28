@@ -3,7 +3,10 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { Mail, Loader2, PhoneCall, UserPlus, Star, MessageSquareText, Phone, Tags } from 'lucide-react';
 
 import { fetchReports, fetchRecords, emailEODNow, IS_DEMO } from '../lib/api';
-import { statsFor, perPerson, fmtQty, groupByTitle } from '../lib/stats';
+import { statsFor, perPerson, fmtQty, groupByTitle, withStatusIn } from '../lib/stats';
+import { entriesIn, fmtWhen } from '../lib/history';
+import CallDrawer from '../components/CallDrawer';
+import { deleteRecords } from '../lib/api';
 import { TEXT_FIELDS } from '../lib/reports';
 import { todayISO, weekRange, monthRange, fmtDate, fromISO, daysBetween } from '../lib/date';
 import { inr, num, pct, compactInr } from '../lib/format';
@@ -27,13 +30,14 @@ export function rangeFor(kind, custom) {
 const tooltipStyle = { borderRadius: 10, border: '1px solid #d9e2de', fontSize: 13, fontFamily: 'Figtree, sans-serif' };
 const axis = { tick: { fontSize: 12, fill: '#5e706e' }, tickLine: false, axisLine: false };
 
-export default function TeamDashboard({ employees, notify, goTo }) {
+export default function TeamDashboard({ user, employees, notify, goTo }) {
   const [kind, setKind] = useState('month');
   const [custom, setCustom] = useState(monthRange());
   const [records, setRecords] = useState(null);
   const [reports, setReports] = useState([]);
   const [todays, setTodays] = useState([]);
   const [sending, setSending] = useState(false);
+  const [open, setOpen] = useState(null);
   const { from, to } = rangeFor(kind, custom);
 
   useEffect(() => {
@@ -55,14 +59,18 @@ export default function TeamDashboard({ employees, notify, goTo }) {
     if (singleDay) return people.map(({ employee: e, s }) => ({ label: e.name.split(' ')[0], ...s }));
     const end = to > todayISO() ? todayISO() : to;
     return daysBetween(from, end).map((date) => {
-      const day = {};
-      Object.entries(records).forEach(([k, list]) => { day[k] = list.filter((r) => r.date === date); });
-      return { label: fromISO(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }), ...statsFor(day) };
+      return { label: fromISO(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }), ...statsFor(records, { from: date, to: date }) };
     });
   }, [records, people, singleDay, from, to]);
 
-  const interested = useMemo(() => (records?.calls || []).filter((c) => c.status === 'interested'), [records]);
-  const hrHighlights = useMemo(() => (records?.hiring || []).filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status)), [records]);
+  const range = useMemo(() => ({ from, to }), [from, to]);
+  const interested = useMemo(() => withStatusIn(records?.calls, 'interested', range), [records, range]);
+  const hrHighlights = useMemo(() => withStatusIn(records?.hiring, ['scheduled', 'joined', 'driver_arranged'], range), [records, range]);
+  const titleStats = (list, statuses) => groupByTitle(list.filter((r) => entriesIn(r, from, to).length)).map((g) => {
+    const out = { title: g.title, calls: g.rows.reduce((n, r) => n + entriesIn(r, from, to).length, 0) };
+    statuses.forEach((st) => { out[st] = withStatusIn(g.rows, st === 'joined' ? ['joined', 'driver_arranged'] : st, range).length; });
+    return out;
+  });
   const updates = useMemo(() => reports.filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key])).slice(0, 8), [reports]);
   const submittedIds = new Set(todays.map((r) => r.employeeId));
 
@@ -130,19 +138,19 @@ export default function TeamDashboard({ employees, notify, goTo }) {
           <div className="panel" style={{ marginBottom: 16 }}>
             <div className="panel-head">
               <h3><Star size={18} style={{ color: 'var(--good)' }} /> Interested & positive calls <span className="chip chip-good">{interested.length}</span></h3>
-              {interested.length > 10 && <button className="btn btn-ghost btn-sm" onClick={() => goTo('records')}>See all</button>}
+              {interested.length > 10 && <button className="btn btn-ghost btn-sm" onClick={() => goTo('records', { type: 'calls', status: 'interested' })}>See all</button>}
             </div>
             {interested.length === 0 ? <p className="muted">No interested calls in this period yet.</p> : (
               <div className="highlight-list">
                 {interested.slice(0, 10).map((c) => (
-                  <div className="hl-item" key={c.id}>
+                  <div className="hl-item clickable-item" key={c.id} onClick={() => setOpen({ type: 'calls', r: c })}>
                     <span className="hl-dot" />
                     <div>
-                      <div className="hl-name">{c.name} {c.title && <span className="title-tag">{c.title}</span>}</div>
+                      <div className="hl-name">{c.name} {c.title && <span className="title-tag">{c.title}</span>} {c.attempts > 1 && <span className="tries">{c.attempts} calls</span>}</div>
                       {c.remarks && <div className="hl-remark">{c.remarks}</div>}
-                      <div className="hl-meta">{c.employee}, {fmtDate(c.date, { day: 'numeric', month: 'short' })}</div>
+                      <div className="hl-meta">{c.employee}, {fmtWhen(c.history[c.history.length - 1])}</div>
                     </div>
-                    {c.phone && <a className="btn btn-ghost btn-sm" href={`tel:${c.phone}`}><Phone size={15} /> {c.phone}</a>}
+                    {c.phone && <a className="btn btn-ghost btn-sm" href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()}><Phone size={15} /> {c.phone}</a>}
                   </div>
                 ))}
               </div>
@@ -156,10 +164,10 @@ export default function TeamDashboard({ employees, notify, goTo }) {
                 <table className="table compact">
                   <thead><tr><th>Calls list</th><th className="r">Calls</th><th className="r">Interested</th><th className="r">Call backs</th></tr></thead>
                   <tbody>
-                    {groupByTitle(records.calls).map((g) => (
-                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.rows.length)}</td>
-                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'interested').length)}</td>
-                        <td className="r">{num(g.rows.filter((r) => r.status === 'callback').length)}</td></tr>
+                    {titleStats(records.calls, ['interested', 'callback']).map((g) => (
+                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.calls)}</td>
+                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.interested)}</td>
+                        <td className="r">{num(g.callback)}</td></tr>
                     ))}
                     {!records.calls.length && <tr><td colSpan={4} className="muted">No calls yet</td></tr>}
                   </tbody>
@@ -169,11 +177,11 @@ export default function TeamDashboard({ employees, notify, goTo }) {
                 <table className="table compact">
                   <thead><tr><th>Hiring for</th><th className="r">Calls</th><th className="r">Scheduled</th><th className="r">Joined</th><th className="r">Relieved</th></tr></thead>
                   <tbody>
-                    {groupByTitle(records.hiring).map((g) => (
-                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.rows.length)}</td>
-                        <td className="r" style={{ color: 'var(--blue)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'scheduled').length)}</td>
-                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.rows.filter((r) => r.status === 'joined' || r.status === 'driver_arranged').length)}</td>
-                        <td className="r" style={{ color: 'var(--bad)' }}>{num(g.rows.filter((r) => r.status === 'relieved').length)}</td></tr>
+                    {titleStats(records.hiring, ['scheduled', 'joined', 'relieved']).map((g) => (
+                      <tr key={g.title}><td><span className="title-tag">{g.title}</span></td><td className="r">{num(g.calls)}</td>
+                        <td className="r" style={{ color: 'var(--blue)', fontWeight: 700 }}>{num(g.scheduled)}</td>
+                        <td className="r" style={{ color: 'var(--good)', fontWeight: 700 }}>{num(g.joined)}</td>
+                        <td className="r" style={{ color: 'var(--bad)' }}>{num(g.relieved)}</td></tr>
                     ))}
                     {!records.hiring.length && <tr><td colSpan={5} className="muted">No HR calls yet</td></tr>}
                   </tbody>
@@ -270,11 +278,12 @@ export default function TeamDashboard({ employees, notify, goTo }) {
               {hrHighlights.length === 0 ? <p className="muted">No interviews or joinings in this period yet.</p> : (
                 <div className="highlight-list">
                   {hrHighlights.slice(0, 6).map((c) => (
-                    <div className="hl-item" key={c.id}>
+                    <div className="hl-item clickable-item" key={c.id} onClick={() => setOpen({ type: 'hiring', r: c })}>
                       <span className="hl-dot" style={{ background: 'var(--blue)' }} />
                       <div>
                         <div className="hl-name">{c.name} {c.title && <span className="title-tag">{c.title}</span>}</div>
-                        <div className="hl-meta">{c.employee}, {fmtDate(c.date, { day: 'numeric', month: 'short' })}{c.phone ? `, ${c.phone}` : ''}</div>
+                        {c.remarks && <div className="hl-remark">{c.remarks}</div>}
+                        <div className="hl-meta">{c.employee}, {fmtWhen(c.history[c.history.length - 1])}{c.phone ? `, ${c.phone}` : ''}</div>
                       </div>
                       <StatusChip type="hiring" value={c.status} />
                     </div>
@@ -296,6 +305,12 @@ export default function TeamDashboard({ employees, notify, goTo }) {
             ))}
           </div>
         </>
+      )}
+      {open && (
+        <CallDrawer type={open.type} record={open.r} user={user} canEdit={!user.viewOnly} notify={notify}
+          onClose={() => setOpen(null)}
+          onChange={(saved) => setRecords((all) => ({ ...all, [open.type]: all[open.type].map((r) => (r.id === saved.id ? saved : r)) }))}
+          onDelete={async (r) => { await deleteRecords(open.type, [r.id]); setRecords((all) => ({ ...all, [open.type]: all[open.type].filter((x) => x.id !== r.id) })); notify('Deleted'); }} />
       )}
     </div>
   );

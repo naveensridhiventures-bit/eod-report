@@ -1,7 +1,8 @@
 import { ROLES, SNAPSHOT, MOODS, RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
 import { fmtDate } from './date';
 import { inr } from './format';
-import { perPerson, statsFor, fmtQty, groupByTitle } from './stats';
+import { perPerson, statsFor, fmtQty, groupByTitle, withStatusIn } from './stats';
+import { isFollowup, historyText, fmtWhen, entriesIn } from './history';
 
 export const moodLabel = (v) => MOODS.find((m) => m.value === Number(v))?.label || '';
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -21,7 +22,8 @@ export function eodText(report, dayRecords) {
     .map((s) => `• ${s.label}: ${s.money ? inr(m[s.key]) : fmtQty(m[s.key])}`);
   if (nums.length) lines.push('*Numbers*', ...nums, '');
 
-  const interested = (dayRecords?.calls || []).filter((c) => c.status === 'interested');
+  const day = { from: report.date, to: report.date };
+  const interested = withStatusIn(dayRecords?.calls, 'interested', day);
   if (interested.length) {
     lines.push(`*Interested customers (${interested.length})*`);
     groupByTitle(interested).forEach((g) => {
@@ -30,7 +32,7 @@ export function eodText(report, dayRecords) {
     });
     lines.push('');
   }
-  const scheduled = (dayRecords?.hiring || []).filter((c) => c.status === 'scheduled');
+  const scheduled = withStatusIn(dayRecords?.hiring, 'scheduled', day);
   if (scheduled.length) {
     lines.push(`*Interviews scheduled (${scheduled.length})*`);
     groupByTitle(scheduled).forEach((g) => {
@@ -56,9 +58,13 @@ export function recordRows(type, list) {
       let v = r[c] ?? '';
       if (c === 'status' || c === 'type') v = statusInfo(type, v).label;
       if (c === 'amount' || c === 'qty') v = Number(v) || 0;
-      if (c === 'followUp' && v === 'done') v = 'Closed';
-      row[COL_LABELS[c]] = v;
+      row[c === 'remarks' && isFollowup(type) ? 'Latest remark' : COL_LABELS[c]] = v;
     });
+    if (isFollowup(type) && r.history) {
+      row['Last update'] = fmtWhen(r.history[r.history.length - 1]);
+      row.Tries = r.history.length;
+      row['Remark history'] = historyText(r, type);
+    }
     return row;
   });
 }
@@ -113,13 +119,15 @@ export async function exportExcel({ records, reports, employees, from, to, title
   ws['!cols'] = Object.keys(summary[0] || { a: 1 }).map((k) => ({ wch: Math.max(12, k.length + 2) }));
   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
 
+  const range = { from, to };
+  const tries = (rows) => rows.reduce((n, r) => n + entriesIn(r, from, to).length, 0);
   const byTitle = [
-    ...groupByTitle(records.calls).map((g) => ({ Kind: 'Customer calls', Title: g.title, Calls: g.rows.length, Interested: g.rows.filter((r) => r.status === 'interested').length, 'Call backs': g.rows.filter((r) => r.status === 'callback').length, Scheduled: '', Joined: '', Relieved: '' })),
-    ...groupByTitle(records.hiring).map((g) => ({ Kind: 'HR calls', Title: g.title, Calls: g.rows.length, Interested: '', 'Call backs': '', Scheduled: g.rows.filter((r) => r.status === 'scheduled').length, Joined: g.rows.filter((r) => r.status === 'joined' || r.status === 'driver_arranged').length, Relieved: g.rows.filter((r) => r.status === 'relieved').length }))
+    ...groupByTitle(records.calls).map((g) => ({ Kind: 'Customer calls', Title: g.title, Calls: tries(g.rows), Interested: withStatusIn(g.rows, 'interested', range).length, 'Call backs': withStatusIn(g.rows, 'callback', range).length, Scheduled: '', Joined: '', Relieved: '' })),
+    ...groupByTitle(records.hiring).map((g) => ({ Kind: 'HR calls', Title: g.title, Calls: tries(g.rows), Interested: '', 'Call backs': '', Scheduled: withStatusIn(g.rows, 'scheduled', range).length, Joined: withStatusIn(g.rows, ['joined', 'driver_arranged'], range).length, Relieved: withStatusIn(g.rows, 'relieved', range).length }))
   ];
   add('By title', byTitle);
-  add('Interested calls', recordRows('calls', records.calls.filter((c) => c.status === 'interested')));
-  add('Scheduled interviews', recordRows('hiring', records.hiring.filter((c) => c.status === 'scheduled')));
+  add('Interested calls', recordRows('calls', withStatusIn(records.calls, 'interested', range)));
+  add('Scheduled interviews', recordRows('hiring', withStatusIn(records.hiring, 'scheduled', range)));
   add('All calls', recordRows('calls', records.calls));
   add('Orders', recordRows('orders', records.orders));
   add('Cancelled', recordRows('cancellations', records.cancellations));
@@ -187,11 +195,11 @@ export async function exportPDF({ records, reports, employees, from, to, title }
       e.name, s.hr_calls, s.scheduled, s.joined, s.drivers_arranged, s.relieved, s.hr_not_interested
     ]));
 
-  const interested = [...records.calls].filter((c) => c.status === 'interested').sort(byDateAsc);
-  section(`Interested & positive calls (${interested.length})`, ['Date', 'Telecaller', 'Title', 'Customer', 'Number', 'Remarks'],
-    interested.map((c) => [c.date, c.employee, c.title, c.name, c.phone, c.remarks]), { columnStyles: { 5: { cellWidth: 280 } } });
+  const interested = withStatusIn(records.calls, 'interested', { from, to }).sort(byDateAsc);
+  section(`Interested & positive calls (${interested.length})`, ['Last update', 'Telecaller', 'Title', 'Customer', 'Number', 'Tries', 'Latest remark'],
+    interested.map((c) => [fmtWhen(c.history?.[c.history.length - 1]), c.employee, c.title, c.name, c.phone, c.attempts || 1, c.remarks]), { columnStyles: { 6: { cellWidth: 250 } } });
 
-  const hrGood = [...records.hiring].filter((c) => ['scheduled', 'joined', 'driver_arranged'].includes(c.status)).sort(byDateAsc);
+  const hrGood = withStatusIn(records.hiring, ['scheduled', 'joined', 'driver_arranged'], { from, to }).sort(byDateAsc);
   section('Hiring highlights', ['Date', 'HR', 'Title', 'Candidate', 'Number', 'Status', 'Remarks'],
     hrGood.map((c) => [c.date, c.employee, c.title, c.name, c.phone, statusInfo('hiring', c.status).label, c.remarks]));
 

@@ -1,14 +1,12 @@
 import { useRef, useState } from 'react';
-import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag, Sparkles } from 'lucide-react';
+import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag, Phone } from 'lucide-react';
 import { RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
-import { parseBulk, readSheetFile, withFollowUps } from '../lib/parse';
-import { whenLabel, fuDate } from '../lib/followup';
-import { polishTexts } from '../lib/api';
+import { parseBulk, readSheetFile } from '../lib/parse';
 import { saveRecords } from '../lib/api';
 import { fmtDate } from '../lib/date';
+import { isFollowup, fmtWhen } from '../lib/history';
 import { inr } from '../lib/format';
 import { fmtQty } from '../lib/stats';
-import { recentTitles, rememberTitle } from '../lib/titles';
 
 export function StatusChip({ type, value }) {
   const s = statusInfo(type, value);
@@ -21,44 +19,80 @@ function cellValue(type, col, r) {
   if (col === 'title') return r.title ? <span className="title-tag">{r.title}</span> : '';
   if (col === 'amount') return r.amount ? inr(r.amount) : '';
   if (col === 'qty') return r.qty ? fmtQty(r.qty) : '';
-  if (col === 'followUp') return !r.followUp ? '' : r.followUp === 'done' ? <span className="muted">Closed</span> : <span className={fuDate(r.followUp) < new Date().toISOString().slice(0, 10) ? 'fu-late' : ''}>{whenLabel(r.followUp)}</span>;
   return r[col] || '';
 }
 
-/** Read-only table of saved records */
-export function RecordTable({ type, rows, showWho, showDate, onDelete, limit }) {
+/** Table of saved records. Rows open the call drawer; checkboxes allow bulk actions. */
+export function RecordTable({ type, rows, showWho, showDate, onDelete, onOpen, selected, onToggle, onToggleAll, limit }) {
+  const followup = isFollowup(type);
   const cols = RECORD_TYPES[type].cols;
   const list = limit ? rows.slice(0, limit) : rows;
+  const allOn = selected && list.length > 0 && list.every((r) => selected.has(r.id));
+  const stop = (e) => e.stopPropagation();
   return (
-    <div className="table-wrap">
-      <table className="table rec-table">
+    <>
+    {followup && (
+      <ul className="rec-cards" aria-label="Calls">
+        {list.map((r) => (
+          <li key={r.id} className={`rec-card ${r.status === 'interested' || r.status === 'scheduled' ? 'hl' : ''} ${selected?.has(r.id) ? 'sel' : ''}`} onClick={onOpen ? () => onOpen(r) : undefined}>
+            {selected && <input type="checkbox" className="rc-cb" aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onClick={stop} onChange={() => onToggle(r.id)} />}
+            <div className="rc-main">
+              <div className="rc-top">
+                <b>{r.name || 'No name'}</b>
+                {r.title && <span className="title-tag">{r.title}</span>}
+              </div>
+              {r.remarks && <p className="rc-remark">{r.remarks}</p>}
+              <div className="rc-meta">
+                <StatusChip type={type} value={r.status} />
+                <span>{fmtWhen(r.history?.[r.history.length - 1])}{r.attempts > 1 ? ` · ${r.attempts} calls` : ''}{showWho ? ` · ${r.employee}` : ''}</span>
+              </div>
+            </div>
+            {r.phone && <a className="rc-call" href={`tel:${r.phone}`} onClick={stop} aria-label={`Call ${r.phone}`}><Phone size={18} /></a>}
+          </li>
+        ))}
+      </ul>
+    )}
+    <div className={`table-wrap ${followup ? 'has-cards' : ''}`}>
+      <table className={`table rec-table ${onOpen ? 'clickable' : ''}`}>
         <thead>
           <tr>
-            {showDate && <th>Date</th>}
+            {selected && (
+              <th className="cb"><input type="checkbox" aria-label="Select all" checked={allOn} onChange={() => onToggleAll(list, !allOn)} /></th>
+            )}
+            {showDate && <th>{followup ? 'Added' : 'Date'}</th>}
             {showWho && <th>By</th>}
-            {cols.map((c) => <th key={c} className={['qty', 'amount'].includes(c) ? 'r' : ''}>{COL_LABELS[c]}</th>)}
+            {cols.map((c) => <th key={c} className={['qty', 'amount'].includes(c) ? 'r' : ''}>{c === 'remarks' && followup ? 'Latest remark' : COL_LABELS[c]}</th>)}
+            {followup && <th>Last update</th>}
+            {followup && <th className="r">Tries</th>}
             {onDelete && <th aria-label="Actions" />}
           </tr>
         </thead>
         <tbody>
           {list.map((r) => (
-            <tr key={r.id} className={r.status === 'interested' ? 'hl' : ''}>
+            <tr key={r.id} className={`${r.status === 'interested' || r.status === 'scheduled' ? 'hl' : ''} ${selected?.has(r.id) ? 'sel' : ''}`}
+              onClick={onOpen ? () => onOpen(r) : undefined}>
+              {selected && (
+                <td className="cb" onClick={stop}><input type="checkbox" aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onChange={() => onToggle(r.id)} /></td>
+              )}
               {showDate && <td>{fmtDate(r.date, { day: 'numeric', month: 'short' })}</td>}
               {showWho && <td>{r.employee}</td>}
               {cols.map((c) => (
                 <td key={c} className={`${['qty', 'amount'].includes(c) ? 'r' : ''} ${c === 'remarks' || c === 'reason' ? 'wrap' : ''}`}>
-                  {c === 'phone' && r.phone ? <a href={`tel:${r.phone}`}>{r.phone}</a> : cellValue(type, c, r)}
+                  {c === 'phone' && r.phone ? <a href={`tel:${r.phone}`} onClick={stop}>{r.phone}</a> : cellValue(type, c, r)}
                 </td>
               ))}
+              {followup && <td className="nowrap muted">{fmtWhen(r.history?.[r.history.length - 1])}</td>}
+              {followup && <td className="r">{r.attempts > 1 ? <span className="tries">{r.attempts}</span> : 1}</td>}
               {onDelete && (
-                <td className="r"><button className="icon-btn" onClick={() => onDelete(r)} aria-label={`Delete ${r.name}`}><Trash2 size={15} /></button></td>
+                <td className="r" onClick={stop}><button className="icon-btn" onClick={() => onDelete(r)} aria-label={`Delete ${r.name}`}><Trash2 size={15} /></button></td>
               )}
             </tr>
           ))}
         </tbody>
       </table>
-      {limit && rows.length > limit && <p className="hint" style={{ padding: '10px 20px' }}>Showing {limit} of {rows.length}.</p>}
     </div>
+    {limit && rows.length > limit && <p className="hint" style={{ padding: '10px 20px' }}>Showing {limit} of {rows.length}. Narrow the filters to see the rest.</p>}
+    </>
   );
 }
 
@@ -85,10 +119,21 @@ function PreviewSummary({ type, rows }) {
   );
 }
 
+const recentKey = (type) => `pulse_titles_${type}`;
+function recentTitles(type) {
+  try { return JSON.parse(localStorage.getItem(recentKey(type))) || []; } catch { return []; }
+}
+function rememberTitle(type, title) {
+  try {
+    const list = [title, ...recentTitles(type).filter((t) => t.toLowerCase() !== title.toLowerCase())].slice(0, 6);
+    localStorage.setItem(recentKey(type), JSON.stringify(list));
+  } catch { /* ignore */ }
+}
+
 /** Paste / upload → check → save */
 export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
   const def = RECORD_TYPES[type];
-  const [title, setTitle] = useState(() => recentTitles(type)[0] || ''); // last-used title is filled in for you
+  const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [rows, setRows] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -102,23 +147,11 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
     titleRef.current?.focus();
     return true;
   };
-  const stamp = (parsed) => withFollowUps(type, parsed.map((r) => ({ ...r, title: r.title || title.trim() })), date);
-  const [polishing, setPolishing] = useState(false);
-  const hasRemarks = rows?.some((r) => String(r.remarks || r.reason || '').trim());
-  const polishAll = async () => {
-    const key = type === 'cancellations' ? 'reason' : 'remarks';
-    setPolishing(true);
-    try {
-      const res = await polishTexts(rows.map((r) => String(r[key] || '')));
-      setRows((rs) => rs.map((r, i) => ({ ...r, [key]: res.texts[i] ?? r[key] })));
-      notify(res.engine === 'basic' ? 'Converted with the basic word list. Add an AI key on the server for full sentences.' : 'Remarks converted to English');
-    } catch (e) { notify(`Couldn’t convert: ${e.message}`, 'error'); }
-    finally { setPolishing(false); }
-  };
+  const stamp = (parsed) => parsed.map((r) => ({ ...r, title: r.title || title.trim() }));
 
-  const read = (src = text) => {
+  const read = () => {
     if (needTitle()) return;
-    const parsed = parseBulk(type, src);
+    const parsed = parseBulk(type, text);
     if (!parsed.length) { notify('No rows found. Put one entry per line with a name and number.', 'error'); return; }
     setRows(stamp(parsed));
   };
@@ -167,7 +200,7 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
     <div className="title-box">
       <label className="label" htmlFor="bi-title-input"><Tag size={15} /> List title <span className="req">required</span></label>
       <input id="bi-title-input" ref={titleRef} className="input title-input" value={title} onChange={(e) => retitle(e.target.value)}
-        placeholder={def.titleHint} autoFocus={!rows && !title} maxLength={60} />
+        placeholder={def.titleHint} autoFocus={!rows} maxLength={60} />
       {!rows && suggestions.length > 0 && (
         <div className="title-chips">
           {suggestions.map((t) => (
@@ -198,16 +231,11 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
               Paste your list, one per line — <b>name, number, then {def.cols.filter((c) => !['title', 'name', 'phone'].includes(c)).map((c) => COL_LABELS[c].toLowerCase()).join(', ')}</b>.
               Copy straight from Excel, WhatsApp or notes. {def.statuses && type !== 'customers' && 'The status is picked up from your remarks; you can change it on the next screen.'}
             </p>
-            <textarea className="textarea mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} autoFocus={!!title}
-              onPaste={(e) => {
-                // Pasting into an empty box reads the list straight away — no extra tap
-                const pasted = e.clipboardData.getData('text');
-                if (!text.trim() && pasted.trim() && title.trim()) { e.preventDefault(); setText(pasted); read(pasted); }
-              }} />
+            <textarea className="textarea mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={def.example} />
             <div className="bi-actions">
               <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}><Upload size={17} /> Upload Excel / CSV</button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={upload} />
-              <button className="btn btn-primary" onClick={() => read()} disabled={!text.trim()}><Wand2 size={17} /> Read list</button>
+              <button className="btn btn-primary" onClick={read} disabled={!text.trim()}><Wand2 size={17} /> Read list</button>
             </div>
             <p className="hint">Excel files need a header row, e.g. {def.cols.filter((c) => c !== 'title').map((c) => COL_LABELS[c].replace(' (₹)', '')).join(' | ')}.</p>
           </>
@@ -239,10 +267,7 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
               </table>
             </div>
             <div className="bi-actions">
-              <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-ghost" onClick={() => setRows(null)}><ArrowLeft size={17} /> Edit pasted text</button>
-                {hasRemarks && <button className="btn btn-ghost" onClick={polishAll} disabled={polishing}>{polishing ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />} Convert remarks to English</button>}
-              </span>
+              <button className="btn btn-ghost" onClick={() => setRows(null)}><ArrowLeft size={17} /> Edit pasted text</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !rows.length}>
                 {saving ? <Loader2 size={17} className="spin" /> : <ClipboardPaste size={17} />} Save {rows.length} {def.noun}
               </button>

@@ -1,17 +1,15 @@
 import { DEFAULT_EMPLOYEES, RECORD_TYPES } from '../config/team';
 import { toISO, addDays } from './date';
 import { classifyCall, classifyHiring } from './parse';
-import { DEFAULT_TARGETS } from '../config/team';
-import { basicPolish } from './thanglish';
-import { followUpFor } from './followup';
+import { isFollowup, withHistory, recompute } from './history';
 
 // Live Google Apps Script web app. A VITE_SHEETS_API_URL in .env overrides it.
-const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzFU8FkIdSKzKjjI0TBgfikNEj0QjAW4iTAlsu3EKrZ5jpvZPwO-SwEslLXEBvlcBpLxA/exec';
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzCqmGETH8jFRizPhQ7BU1qjM4o2G2W5HgalWYTm2_2Nu2B7b0FcrqArSmACkgWh8EabA/exec';
 const API_URL = import.meta.env.VITE_DEMO === '1' ? '' : (import.meta.env.VITE_SHEETS_API_URL || DEFAULT_API_URL).trim();
 export const IS_DEMO = !API_URL;
 
-const LS_REPORTS = 'pulse_demo_reports_v6';
-const LS_RECORDS = 'pulse_demo_records_v6';
+const LS_REPORTS = 'pulse_demo_reports_v4';
+const LS_RECORDS = 'pulse_demo_records_v4';
 const LS_SETTINGS = 'pulse_demo_settings_v1';
 export const TYPE_KEYS = Object.keys(RECORD_TYPES);
 
@@ -61,13 +59,21 @@ const AREAS = ['Tambaram', 'Velachery', 'Porur', 'Anna Nagar', 'T Nagar', 'Guind
 const PRODUCTS = [['Groundnut oil', 'L', 230], ['Sunflower oil', 'L', 160], ['Rice', 'kg', 56], ['Toor dal', 'kg', 140], ['Sugar', 'kg', 44], ['Gingelly oil', 'L', 390]];
 const CALL_REMARKS = ['Interested, send price list', 'Positive, will order next week', 'Call back tomorrow', 'Not interested', 'Switched off', 'Busy, call later', 'Interested in 15 L oil', 'Already buying from others', 'No response', 'Asked for sample'];
 const HR_REMARKS = ['Interview scheduled tomorrow 11am', 'Joined today', 'Not interested, salary issue', 'No response', 'Driver arranged for Porur route', 'Called, will think', 'Relieved from work', 'Interview scheduled Monday'];
-const HR_BY_STATUS = {
-  called: 'Called, will think', scheduled: 'Interview scheduled tomorrow 11am', attended: 'Came for interview, good driving', selected: 'Selected, joining Monday',
-  joined: 'Joined today', no_show: 'Did not come for interview', not_interested: 'Not interested, salary issue', no_answer: 'No response',
-  driver_arranged: 'Driver arranged for Porur route', rejected: 'No licence'
-};
 const PEOPLE = ['Suresh', 'Priya', 'Arun', 'Karthik', 'Vijay', 'Divya', 'Manoj', 'Revathi', 'Prakash', 'Sathish', 'Keerthi'];
 const phone = () => String(rnd(6, 9)) + String(rnd(100000000, 999999999));
+
+// Gives some demo calls a second or third attempt on later days
+function seedHistory(r, remarks, classify, daysAgo) {
+  const first = { at: `${r.date}T${pad2(rnd(9, 12))}:${pad2(rnd(0, 59))}:00`, d: r.date, t: `${pad2(rnd(9, 12))}:${pad2(rnd(0, 59))}`, by: r.employee, byId: r.employeeId, status: r.status, remark: r.remarks };
+  const history = [first];
+  if (['no_answer', 'callback', 'called'].includes(r.status) && daysAgo > 1 && Math.random() < 0.6) {
+    const later = toISO(addDays(new Date(r.date), rnd(1, Math.min(3, daysAgo - 1))));
+    const remark = pick(remarks);
+    history.push({ at: `${later}T${pad2(rnd(13, 18))}:${pad2(rnd(0, 59))}:00`, d: later, t: `${pad2(rnd(13, 18))}:${pad2(rnd(0, 59))}`, by: r.employee, byId: r.employeeId, status: classify(remark), remark });
+  }
+  return recompute({ ...r, history });
+}
+const pad2 = (n) => String(n).padStart(2, '0');
 
 function seedDemo() {
   const reports = [];
@@ -88,8 +94,7 @@ function seedDemo() {
       if (emp.roles.includes('telecaller')) {
         for (let c = 0; c < rnd(12, 30); c++) {
           const remarks = pick(CALL_REMARKS);
-          const st = classifyCall(remarks);
-          records.push({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done', duration: st === 'no_answer' ? 0 : rnd(25, 320) });
+          records.push(seedHistory({ ...base(d, 'calls'), type_: 'calls', title: pick(['Sales', 'Sales', 'Distributor hiring']), name: pick(SHOPS), phone: phone(), remarks, status: classifyCall(remarks) }, CALL_REMARKS, classifyCall, i));
         }
         for (let o = 0; o < rnd(1, 5); o++) {
           const [product, unit, price] = pick(PRODUCTS);
@@ -104,9 +109,8 @@ function seedDemo() {
       }
       if (emp.roles.includes('hiring')) {
         for (let c = 0; c < rnd(6, 16); c++) {
-          const st = pick(['called', 'scheduled', 'scheduled', 'attended', 'selected', 'joined', 'no_show', 'not_interested', 'no_answer', 'driver_arranged', 'rejected']);
-          const remarks = HR_BY_STATUS[st];
-          records.push({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: st, followUp: i <= 5 ? followUpFor(st, remarks, toISO(d)) : 'done', duration: st === 'no_answer' ? 0 : rnd(40, 400) });
+          const remarks = pick(HR_REMARKS);
+          records.push(seedHistory({ ...base(d, 'hiring'), type_: 'hiring', title: pick(['Driver', 'Call driver', 'Telecaller', 'Delivery boy']), name: pick(PEOPLE), phone: phone(), remarks, status: classifyHiring(remarks) }, HR_REMARKS, classifyHiring, i));
         }
       }
       reports.push({
@@ -118,24 +122,6 @@ function seedDemo() {
         submittedAt: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18, rnd(0, 59)).toISOString()
       });
     }
-  });
-  // Call queue: open leads for each telecaller, a few numbers on do-not-call, and job openings
-  const AREAS2 = ['Tambaram', 'Velachery', 'Porur', 'Anna Nagar', 'Ambattur', 'T Nagar', 'Adyar'];
-  DEFAULT_EMPLOYEES.filter((e) => e.roles.includes('telecaller')).forEach((emp) => {
-    for (let k = 0; k < 18; k++) {
-      records.push({ id: `leads_${emp.id}_${n++}`, type_: 'leads', date: toISO(today), employeeId: emp.id, employee: emp.name, createdAt: new Date(Date.now() - k * 1000).toISOString(),
-        title: 'Ambattur shops', kind: 'sales', name: `${pick(SHOPS)} ${rnd(1, 99)}`, phone: phone(), area: pick(AREAS2), notes: k % 4 === 0 ? 'Big grocery, owner available after 4 PM' : '', state: 'open', result: '', doneAt: '', assignedBy: 'Naveen' });
-    }
-  });
-  DEFAULT_EMPLOYEES.filter((e) => e.roles.includes('hiring')).forEach((emp) => {
-    for (let k = 0; k < 6; k++) {
-      records.push({ id: `leads_${emp.id}_${n++}`, type_: 'leads', date: toISO(today), employeeId: emp.id, employee: emp.name, createdAt: new Date(Date.now() - k * 1000).toISOString(),
-        title: 'Driver applicants', kind: 'hiring', name: pick(PEOPLE), phone: phone(), area: pick(AREAS2), notes: 'Applied on Indeed', state: 'open', result: '', doneAt: '', assignedBy: 'Naveen' });
-    }
-  });
-  records.push({ id: `dnc_${n++}`, type_: 'dnc', date: toISO(today), employeeId: 'naveen', employee: 'Naveen', createdAt: today.toISOString(), name: 'Wrong number', phone: '9000000001', reason: 'Asked not to call' });
-  [['Driver', 30], ['Call driver', 40], ['Telecaller', 20], ['Delivery boy', 45]].forEach(([title, needed]) => {
-    records.push({ id: `openings_${n++}`, type_: 'openings', date: toISO(addDays(today, -20)), employeeId: 'naveen', employee: 'Naveen', createdAt: today.toISOString(), title, needed, active: 'yes' });
   });
   return { reports, records };
 }
@@ -193,9 +179,10 @@ export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } =
   if (IS_DEMO) {
     demoData().records.forEach((r) => {
       if (!out[r.type_]) return;
-      const ok = r.type_ === 'dnc' || r.type_ === 'openings' ? true
-        : r.type_ === 'customers' || r.type_ === 'leads' ? (!employeeId || r.employeeId === employeeId)
-          : inRange(r, from, to, employeeId);
+      let ok;
+      if (r.type_ === 'customers') ok = !employeeId || r.employeeId === employeeId;
+      else if (isFollowup(r.type_)) ok = activeInRange(r, from, to, employeeId);
+      else ok = inRange(r, from, to, employeeId);
       if (ok) out[r.type_].push(r);
     });
   } else {
@@ -205,15 +192,56 @@ export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } =
     if (employeeId) params.employeeId = employeeId;
     Object.assign(out, await get(params));
   }
-  Object.values(out).forEach((list) => list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  Object.keys(out).forEach((t) => {
+    if (isFollowup(t)) out[t] = out[t].map(withHistory);
+    out[t].sort((a, b) => ((a.lastAt || a.createdAt) < (b.lastAt || b.createdAt) ? 1 : -1));
+  });
   return out;
+}
+
+// A call belongs to a period if it was added before the period ended and touched during/after its start
+function activeInRange(r, from, to, employeeId) {
+  if (employeeId && r.employeeId !== employeeId) return false;
+  if (to && r.date > to) return false;
+  if (from && (r.lastDate || r.date) < from) return false;
+  return true;
+}
+
+// Sheets store the history as text
+const toWire = (r) => (r.history ? { ...r, history: JSON.stringify(r.history), type_: undefined } : { ...r, type_: undefined });
+
+/** Save edited records (full records, including history for calls) */
+export async function updateRecords(type, records) {
+  const list = isFollowup(type) ? records.map(recompute) : records;
+  if (IS_DEMO) {
+    const byId = new Map(list.map((r) => [r.id, r]));
+    const { records: all } = demoData();
+    lsSet(LS_RECORDS, all.map((r) => (byId.has(r.id) ? { ...byId.get(r.id), type_: r.type_ } : r)));
+    return list;
+  }
+  await post({ action: 'updateRecords', type, records: list.map(toWire) });
+  return list;
+}
+
+export async function deleteRecords(type, ids) {
+  if (IS_DEMO) {
+    const set = new Set(ids);
+    const { records } = demoData();
+    lsSet(LS_RECORDS, records.filter((r) => !set.has(r.id)));
+    return true;
+  }
+  return post({ action: 'deleteRecords', type, ids });
 }
 
 export async function saveRecords(type, rows, { date, employeeId, employee }) {
   const stamp = Date.now();
   const createdAt = new Date().toISOString();
-  // A row can carry its own employeeId/employee (e.g. leads assigned to someone else)
-  const records = rows.map((r, i) => ({ ...r, id: `${type}_${employeeId}_${stamp}_${i}`, date, employeeId: r.employeeId || employeeId, employee: r.employee || employee, createdAt }));
+  const now = new Date();
+  const t = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  let records = rows.map((r, i) => ({ ...r, id: `${type}_${employeeId}_${stamp}_${i}`, date, employeeId, employee, createdAt }));
+  if (isFollowup(type)) {
+    records = records.map((r) => recompute({ ...r, history: [{ at: createdAt, d: date, t, by: employee, byId: employeeId, status: r.status, remark: r.remarks || '' }] }));
+  }
   if (IS_DEMO) {
     const { records: all } = demoData();
     let next = all;
@@ -224,7 +252,7 @@ export async function saveRecords(type, rows, { date, employeeId, employee }) {
     lsSet(LS_RECORDS, [...next, ...records.map((r) => ({ ...r, type_: type }))]);
     return records;
   }
-  await post({ action: 'saveRecords', type, records });
+  await post({ action: 'saveRecords', type, records: records.map(toWire) });
   return records;
 }
 
@@ -237,70 +265,12 @@ export async function deleteRecord(type, id) {
   return post({ action: 'deleteRecord', type, id });
 }
 
-/** Change a saved entry — used to reschedule or close a follow-up. Only followUp, status and remarks can change. */
-export async function updateRecord(type, id, fields) {
-  if (IS_DEMO) {
-    const { records } = demoData();
-    lsSet(LS_RECORDS, records.map((r) => (r.id === id ? { ...r, ...fields } : r)));
-    return true;
-  }
-  return post({ action: 'updateRecord', type, id, fields });
-}
-
-/** Several changes in one go: [{ id, fields }] — used for reassigning leads. */
-export async function updateRecords(type, updates) {
-  if (!updates.length) return true;
-  if (IS_DEMO) {
-    const map = new Map(updates.map((u) => [u.id, u.fields]));
-    const { records } = demoData();
-    lsSet(LS_RECORDS, records.map((r) => (map.has(r.id) ? { ...r, ...map.get(r.id) } : r)));
-    return true;
-  }
-  return post({ action: 'updateRecords', type, updates });
-}
-
-/**
- * Thanglish / rough notes → clear English. Returns { texts, engine }.
- * engine: 'claude' | 'gemini' (AI on the server), 'basic' (word list only), 'cache'.
- */
-export async function polishTexts(texts) {
-  if (IS_DEMO) return { texts: texts.map(basicPolish), engine: 'basic' };
-  return post({ action: 'polish', texts });
-}
-
-/** Admin turns AI English on/off. provider: 'gemini' | 'claude' | 'off'. Returns the engine now in use. */
-export async function saveAiKey(employeeId, pin, provider, key) {
-  if (IS_DEMO) throw new Error('Connect Google Sheets first — the key is stored safely on your server.');
-  return post({ action: 'saveAiKey', employeeId, pin, provider, key });
-}
-
-/** Lets someone set the email their follow-up reminders go to (PIN checked on the server). */
-export async function saveMyEmail(employeeId, pin, email) {
-  if (IS_DEMO) throw new Error('Connect Google Sheets to use email reminders.');
-  return post({ action: 'saveMyEmail', employeeId, pin, email });
-}
-
-export async function emailMyFollowUps(employeeId) {
-  if (IS_DEMO) throw new Error('Connect Google Sheets to send reminder emails.');
-  return post({ action: 'sendMyFollowUps', employeeId });
-}
-
 export const DEFAULT_SETTINGS = {
   MANAGEMENT_EMAILS: 'hiring.sridhiventures@gmail.com',
   NOTIFY_ON_SUBMIT: 'yes',
   COMPANY_NAME: 'Sridhi Ventures',
-  APP_LINK: '',
-  FOLLOWUP_EMAILS: 'yes',
-  FOLLOWUP_DIGEST: 'no',
-  TARGETS: JSON.stringify(DEFAULT_TARGETS)
+  APP_LINK: ''
 };
-
-/** Daily targets for one person: their own numbers, else the team default. */
-export function targetsFor(settings, employeeId) {
-  let t = DEFAULT_TARGETS;
-  try { t = { ...DEFAULT_TARGETS, ...JSON.parse(settings?.TARGETS || '{}') }; } catch { /* keep defaults */ }
-  return { ...DEFAULT_TARGETS._default, ...(t._default || {}), ...(t[employeeId] || {}) };
-}
 
 export async function fetchSettings() {
   if (IS_DEMO) return { ...DEFAULT_SETTINGS, ...(lsGet(LS_SETTINGS) || {}) };
