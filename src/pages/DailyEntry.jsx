@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Sparkles, Save, Loader2, Check, Copy, Send, CheckCircle2, Clock, Upload, PhoneForwarded } from 'lucide-react';
-import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT, FOLLOWUP_STATUSES } from '../config/team';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Sparkles, Save, Loader2, Check, Copy, Send, CheckCircle2, Clock, Upload, PhoneForwarded, Briefcase } from 'lucide-react';
+import { ROLES, MOODS, RECORD_TYPES, SNAPSHOT, FOLLOWUP_STATUSES, EXTRA_FIELD } from '../config/team';
 import { ROLE_ICONS, Loading, Segmented } from '../components/ui';
 import { BulkImport, RecordTable } from '../components/Records';
 import { fetchReports, saveReport, fetchRecords, deleteRecords } from '../lib/api';
@@ -100,14 +100,16 @@ export default function DailyEntry({ user, notify, goTo }) {
   const hasImports = user.roles.some((r) => ROLES[r]?.imports.length);
 
   useEffect(() => {
-    fetchReports({ employeeId: user.id, from: toISO(addDays(new Date(), -120)) })
-      .then(setHistory)
+    // Same data as last time is kept as-is, so an open form is never reset by the background refresh
+    const keep = (list) => setHistory((prev) => (prev && JSON.stringify(prev) === JSON.stringify(list) ? prev : list));
+    fetchReports({ employeeId: user.id, from: toISO(addDays(new Date(), -120)), onCache: keep })
+      .then(keep)
       .catch((e) => { setHistory([]); notify(`Couldn’t load your past reports: ${e.message}`, 'error'); });
   }, [user.id, notify]);
 
   const loadRecords = useCallback(() => {
     if (!hasImports) { setRecords({}); return; }
-    fetchRecords({ employeeId: user.id, from: date, to: date })
+    fetchRecords({ employeeId: user.id, from: date, to: date, onCache: setRecords })
       .then(setRecords)
       .catch((e) => { setRecords({}); notify(`Couldn’t load today’s lists: ${e.message}`, 'error'); });
   }, [user.id, date, hasImports, notify]);
@@ -126,12 +128,16 @@ export default function DailyEntry({ user, notify, goTo }) {
   }, [user.id, hasImports, records]);
 
   const existing = useMemo(() => history?.find((r) => r.date === date), [history, date]);
+  const formKey = useRef('');
   useEffect(() => {
     if (!history) return;
+    const key = `${date}|${existing?.submittedAt || ''}`;
+    if (formKey.current === key) return; // already showing this day, don't overwrite what is being typed
+    formKey.current = key;
     setForm(existing
       ? { notes: { ...existing.notes }, positives: existing.positives || '', challenges: existing.challenges || '', tomorrow: existing.tomorrow || '', mood: Number(existing.mood) || 0 }
       : blankForm());
-  }, [existing, history]);
+  }, [existing, history, date]);
 
   const streak = useMemo(() => calcStreak((history || []).map((r) => r.date)), [history]);
   const dayRecs = useMemo(() => (records ? recordsOnDate(records, date) : {}), [records, date]);
@@ -233,6 +239,18 @@ export default function DailyEntry({ user, notify, goTo }) {
           </section>
         );
       })}
+
+      <section className="section">
+        <div className="section-head">
+          <span className="section-icon" style={{ background: '#5b6b68' }}><Briefcase size={18} /></span>
+          <h3>Additional work</h3>
+          <span className="chip" style={{ marginLeft: 'auto' }}>optional</span>
+        </div>
+        <div className="section-body">
+          <label className="label" htmlFor={EXTRA_FIELD.key}>Anything else you did today?</label>
+          <textarea id={EXTRA_FIELD.key} className="textarea" rows={EXTRA_FIELD.rows} placeholder={EXTRA_FIELD.placeholder} value={form.notes[EXTRA_FIELD.key] || ''} onChange={(e) => setNote(EXTRA_FIELD.key, e.target.value)} />
+        </div>
+      </section>
 
       <section className="section">
         <div className="section-head">

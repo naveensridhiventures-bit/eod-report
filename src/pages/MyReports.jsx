@@ -38,7 +38,7 @@ export default function MyReports({ user, notify, goTo }) {
 
   useEffect(() => {
     setReports(null);
-    Promise.all([fetchReports({ employeeId: user.id, from, to }), fetchRecords({ employeeId: user.id, from, to })])
+    Promise.all([fetchReports({ employeeId: user.id, from, to, onCache: setReports }), fetchRecords({ employeeId: user.id, from, to, onCache: setRecords })])
       .then(([rep, rec]) => { setReports(rep); setRecords(rec); })
       .catch((e) => { setReports([]); setRecords({}); notify(e.message, 'error'); });
   }, [user.id, from, to, notify]);

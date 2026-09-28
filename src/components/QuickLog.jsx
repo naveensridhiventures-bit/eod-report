@@ -54,7 +54,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
     setEditingTitle(false);
   }, [type, def.titles]);
 
-  const titleOptions = useMemo(() => [...new Set([...recentTitles(type), ...(def.titles || [])])].slice(0, 6), [type, def.titles, title]);
+  const titleOptions = useMemo(() => (type === 'hiring' ? [...(def.titles || [])] : [...new Set([...recentTitles(type), ...(def.titles || [])])].slice(0, 6)), [type, def.titles, title]);
 
   const phone = normalisePhone(v.phone);
   const dupe = phone.length === 10 && dayRows.some((r) => r.phone === phone);
@@ -153,7 +153,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
         <Tag size={14} />
         {editingTitle ? (
           <>
-            <input className="input ql-title-input" value={title} autoFocus maxLength={60} placeholder={def.titleHint}
+            <input className="input ql-title-input" value={title} autoFocus maxLength={60} placeholder={type === 'hiring' ? 'Type the role, e.g. Cook, Electrician' : def.titleHint}
               onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setEditingTitle(false)} />
             <button className="icon-btn" onClick={() => setEditingTitle(false)} aria-label="Done"><Check size={16} /></button>
           </>
@@ -162,7 +162,7 @@ export default function QuickLog({ type, date, user, dayRows, onAdded, onRemoved
             {titleOptions.map((t) => (
               <button key={t} type="button" className={`chip chip-btn ${title === t ? 'on' : ''}`} onClick={() => setTitle(t)}>{t}</button>
             ))}
-            <button type="button" className="chip chip-btn" onClick={() => setEditingTitle(true)}>+ New</button>
+            <button type="button" className="chip chip-btn" onClick={() => { if (type === 'hiring') setTitle(''); setEditingTitle(true); }}>{type === 'hiring' ? 'Other' : '+ New'}</button>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { ROLES, SNAPSHOT, MOODS, RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
+import { ROLES, SNAPSHOT, MOODS, RECORD_TYPES, COL_LABELS, EXTRA_FIELD, statusInfo } from '../config/team';
 import { fmtDate } from './date';
 import { inr } from './format';
 import { perPerson, statsFor, fmtQty, groupByTitle, withStatusIn } from './stats';
@@ -8,7 +8,7 @@ export const moodLabel = (v) => MOODS.find((m) => m.value === Number(v))?.label 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 const byDateAsc = (a, b) => (a.date === b.date ? (a.createdAt > b.createdAt ? 1 : -1) : a.date > b.date ? 1 : -1);
 
-export const TEXT_FIELDS = Object.values(ROLES).flatMap((r) => r.text);
+export const TEXT_FIELDS = [...Object.values(ROLES).flatMap((r) => r.text), EXTRA_FIELD];
 
 // ── WhatsApp / plain-text EOD ──────────────────────────────────
 export function eodText(report, dayRecords) {

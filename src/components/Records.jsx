@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { X, Upload, ClipboardPaste, Trash2, Loader2, Wand2, ArrowLeft, Tag, Phone } from 'lucide-react';
-import { RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
+import { HIRING_ROLES, RECORD_TYPES, COL_LABELS, statusInfo } from '../config/team';
 import { parseBulk, readSheetFile } from '../lib/parse';
 import { saveRecords } from '../lib/api';
 import { fmtDate } from '../lib/date';
@@ -139,11 +139,13 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
   const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
   const titleRef = useRef(null);
+  const isHiring = type === 'hiring';
+  const [otherRole, setOtherRole] = useState(false);
 
   const suggestions = [...new Set([...recentTitles(type), ...(def.titles || [])])].slice(0, 8);
   const needTitle = () => {
     if (title.trim()) return false;
-    notify('Add a title for this list first — e.g. Driver, Sales, Distributor hiring.', 'error');
+    notify(isHiring ? (otherRole ? 'Type the role you are hiring for.' : 'Pick the role you are hiring for first.') : 'Add a title for this list first — e.g. Driver, Sales, Distributor hiring.', 'error');
     titleRef.current?.focus();
     return true;
   };
@@ -196,7 +198,24 @@ export function BulkImport({ type, date, user, onClose, onSaved, notify }) {
     }
   };
 
-  const titleBox = (
+  const roleBox = (
+    <div className="title-box">
+      <label className="label"><Tag size={15} /> Which role are you hiring for? <span className="req">required</span></label>
+      <div className="title-chips">
+        {HIRING_ROLES.map((r) => (
+          <button key={r} type="button" className={`chip chip-btn ${!otherRole && title === r ? 'on' : ''}`} onClick={() => { setOtherRole(false); retitle(r); }}>{r}</button>
+        ))}
+        <button type="button" className={`chip chip-btn ${otherRole ? 'on' : ''}`} onClick={() => { setOtherRole(true); retitle(''); setTimeout(() => titleRef.current?.focus(), 0); }}>Other</button>
+      </div>
+      {otherRole && (
+        <input id="bi-title-input" ref={titleRef} className="input title-input" style={{ marginTop: 10 }} value={title} onChange={(e) => retitle(e.target.value)}
+          placeholder="Type the role, e.g. Cook, Electrician, Delivery boy" maxLength={40} />
+      )}
+      <p className="hint">Every candidate in this list is saved under this role, so management can filter and report by it.</p>
+    </div>
+  );
+
+  const titleBox = isHiring ? roleBox : (
     <div className="title-box">
       <label className="label" htmlFor="bi-title-input"><Tag size={15} /> List title <span className="req">required</span></label>
       <input id="bi-title-input" ref={titleRef} className="input title-input" value={title} onChange={(e) => retitle(e.target.value)}

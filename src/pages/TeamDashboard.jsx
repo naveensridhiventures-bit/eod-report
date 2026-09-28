@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { Mail, Loader2, PhoneCall, UserPlus, Star, MessageSquareText, Phone, Tags } from 'lucide-react';
 
@@ -12,6 +12,7 @@ import { todayISO, weekRange, monthRange, fmtDate, fromISO, daysBetween } from '
 import { inr, num, pct, compactInr } from '../lib/format';
 import { Avatar, Segmented, Loading, Empty } from '../components/ui';
 import { StatusChip } from '../components/Records';
+import PendingTracker from '../components/PendingTracker';
 
 const RANGES = [
   { value: 'today', label: 'Today' },
@@ -42,12 +43,22 @@ export default function TeamDashboard({ user, employees, notify, goTo }) {
 
   useEffect(() => {
     setRecords(null);
-    Promise.all([fetchRecords({ from, to }), fetchReports({ from, to })])
+    Promise.all([fetchRecords({ from, to, onCache: setRecords }), fetchReports({ from, to, onCache: setReports })])
       .then(([rec, rep]) => { setRecords(rec); setReports(rep); })
       .catch((e) => { setRecords({ calls: [], orders: [], customers: [], cancellations: [], hiring: [] }); notify(e.message, 'error'); });
   }, [from, to, notify]);
 
-  useEffect(() => { fetchReports({ from: todayISO(), to: todayISO() }).then(setTodays).catch(() => {}); }, []);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadToday = useCallback((force = false) => {
+    setRefreshing(true);
+    return fetchReports({ from: todayISO(), to: todayISO(), onCache: setTodays, force }).then(setTodays).catch(() => {}).finally(() => setRefreshing(false));
+  }, []);
+  // Today's check-in refreshes itself every 2 minutes while this page is open
+  useEffect(() => {
+    loadToday();
+    const id = setInterval(() => loadToday(true), 120000);
+    return () => clearInterval(id);
+  }, [loadToday]);
 
   const staff = useMemo(() => employees.filter((e) => !e.viewOnly), [employees]);
   const t = useMemo(() => (records ? statsFor(records, { from, to }) : null), [records, from, to]);
@@ -72,8 +83,7 @@ export default function TeamDashboard({ user, employees, notify, goTo }) {
     return out;
   });
   const updates = useMemo(() => reports.filter((r) => TEXT_FIELDS.some((f) => r.notes?.[f.key])).slice(0, 8), [reports]);
-  const submittedIds = new Set(todays.map((r) => r.employeeId));
-
+  
   const sendNow = async () => {
     setSending(true);
     try { await emailEODNow(todayISO()); notify('Today’s summary emailed to management'); }
@@ -101,26 +111,14 @@ export default function TeamDashboard({ user, employees, notify, goTo }) {
         </div>
       )}
 
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-head">
-          <h3>Today’s check-in <span className="chip chip-gold">{submittedIds.size} of {staff.length} submitted</span></h3>
-          {!IS_DEMO && (
-            <button className="btn btn-ghost btn-sm" onClick={sendNow} disabled={sending}>
-              {sending ? <Loader2 size={16} className="spin" /> : <Mail size={16} />} Email today’s summary
-            </button>
-          )}
+      <PendingTracker staff={staff} todays={todays} notify={notify} onRefresh={() => loadToday(true)} refreshing={refreshing} />
+      {!IS_DEMO && (
+        <div style={{ marginBottom: 16 }}>
+          <button className="btn btn-ghost btn-sm" onClick={sendNow} disabled={sending}>
+            {sending ? <Loader2 size={16} className="spin" /> : <Mail size={16} />} Email today’s summary
+          </button>
         </div>
-        <div className="who">
-          {staff.map((e) => {
-            const r = todays.find((x) => x.employeeId === e.id);
-            return (
-              <span key={e.id} className={`who-item ${r ? '' : 'pending'}`}>
-                <Avatar person={e} /> {e.name} {r ? <span className="chip chip-good" style={{ height: 22 }}>Done</span> : <span style={{ fontWeight: 500 }}>pending</span>}
-              </span>
-            );
-          })}
-        </div>
-      </div>
+      )}
 
       {!records ? <Loading /> : (
         <>
@@ -294,7 +292,7 @@ export default function TeamDashboard({ user, employees, notify, goTo }) {
           </div>
 
           <div className="panel">
-            <div className="panel-head"><h3><MessageSquareText size={18} /> Developer & sales head updates</h3></div>
+            <div className="panel-head"><h3><MessageSquareText size={18} /> Written updates & additional work</h3></div>
             {updates.length === 0 ? <Empty title="No written updates yet">Updates appear here once the team submits their day.</Empty> : updates.map((r) => (
               <div className="update-item" key={r.id}>
                 <div className="cell-person"><Avatar person={{ id: r.employeeId, name: r.name }} />{r.name}<span className="muted" style={{ fontWeight: 500, fontSize: 13 }}>{fmtDate(r.date, { weekday: 'short', day: 'numeric', month: 'short' })}</span></div>

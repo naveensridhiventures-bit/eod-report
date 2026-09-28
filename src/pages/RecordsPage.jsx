@@ -53,7 +53,7 @@ export default function RecordsPage({ user, employees, notify, params }) {
 
   const load = useCallback(() => {
     setRecords(null);
-    fetchRecords({ types: myTypes, from: from || undefined, to: to || undefined, employeeId: who === 'all' ? undefined : who })
+    fetchRecords({ types: myTypes, from: from || undefined, to: to || undefined, employeeId: who === 'all' ? undefined : who, onCache: setRecords })
       .then(setRecords)
       .catch((e) => { setRecords({}); notify(e.message, 'error'); });
   }, [from, to, who, myTypes, notify]);

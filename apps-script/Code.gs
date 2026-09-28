@@ -171,7 +171,7 @@ function fail(msg) { return { ok: false, error: msg }; }
 // ── Employees ─────────────────────────────────────────────────
 function getEmployees(includePin) {
   return readSheet(SHEET_EMPLOYEES).filter(function (r) { return r.id; }).map(function (r) {
-    var out = { id: String(r.id), name: r.name, title: r.title, roles: String(r.roles || ''), isAdmin: r.isAdmin, viewOnly: r.viewOnly };
+    var out = { id: String(r.id), name: r.name, title: r.title, roles: String(r.roles || ''), isAdmin: r.isAdmin, viewOnly: r.viewOnly, phone: String(r.phone || '').replace(/[^0-9]/g, '') };
     if (includePin) { out.pin = String(r.pin); out.email = r.email; }
     return out;
   });
@@ -638,6 +638,7 @@ function notesOf(r) {
   if (n.work_done) parts.push(['Work done', n.work_done]);
   if (n.head_update) parts.push(['Team update', n.head_update]);
   if (n.blockers) parts.push(['Blockers', n.blockers]);
+  if (n.extra_work) parts.push(['Additional work', n.extra_work]);
   if (r.positives) parts.push(['Wins', r.positives]);
   if (r.challenges) parts.push(['Challenges', r.challenges]);
   return parts;

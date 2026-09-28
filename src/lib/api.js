@@ -14,14 +14,28 @@ const LS_SETTINGS = 'pulse_demo_settings_v1';
 export const TYPE_KEYS = Object.keys(RECORD_TYPES);
 
 // ── Google Apps Script transport ───────────────────────────────
-// POST uses text/plain so the browser skips the CORS preflight.
-async function get(params) {
+// GET is retried once on network trouble / timeouts (Apps Script cold starts are the usual cause).
+async function rawGet(params) {
   const url = `${API_URL}?${new URLSearchParams(params).toString()}`;
-  const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Request failed');
-  return json.data;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      const res = await fetch(url, { method: 'GET', redirect: 'follow', signal: ctrl.signal });
+      const json = await res.json();
+      if (!json.ok) { const e = new Error(json.error || 'Request failed'); e.server = true; throw e; }
+      return json.data;
+    } catch (e) {
+      lastErr = e;
+      if (e.server) throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr?.name === 'AbortError' ? new Error('The server is slow right now. Please try again.') : lastErr;
 }
+const get = rawGet;
 
 async function post(body) {
   const res = await fetch(API_URL, {
@@ -32,7 +46,54 @@ async function post(body) {
   });
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || 'Request failed');
+  if (body.action !== 'login') clearCache(); // anything we read before this write is now out of date
   return json.data;
+}
+
+// ── Read cache (stale-while-revalidate) ────────────────────────
+// Pages get the last known data instantly (onCache), then the fresh data when it arrives.
+const LS_CACHE = 'pulse_cache_v1:';
+const FRESH_MS = 15000;
+const mem = new Map();
+const inflight = new Map();
+const cacheKey = (p) => Object.keys(p).sort().map((k) => `${k}=${p[k]}`).join('&');
+
+function readCache(key) {
+  if (mem.has(key)) return mem.get(key);
+  try {
+    const raw = localStorage.getItem(LS_CACHE + key);
+    if (raw) { const v = JSON.parse(raw); mem.set(key, v); return v; }
+  } catch { /* unreadable */ }
+  return null;
+}
+function writeCache(key, data) {
+  const v = { t: Date.now(), data };
+  mem.set(key, v);
+  try {
+    const str = JSON.stringify(v);
+    if (str.length < 900000) localStorage.setItem(LS_CACHE + key, str);
+  } catch { /* storage full */ }
+}
+/** Drops cached reports/records (after a write). Pass true to drop everything (sign-out). */
+export function clearCache(all = false) {
+  const drop = (key) => all || key.startsWith('action=reports') || key.startsWith('action=records');
+  [...mem.keys()].forEach((k) => { if (drop(k)) mem.delete(k); });
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i += 1) keys.push(localStorage.key(i));
+    keys.filter((k) => k && k.startsWith(LS_CACHE) && drop(k.slice(LS_CACHE.length))).forEach((k) => localStorage.removeItem(k));
+  } catch { /* blocked */ }
+}
+
+function cachedRead(params, process, { onCache, force } = {}) {
+  const key = cacheKey(params);
+  const hit = readCache(key);
+  if (hit && onCache) { try { onCache(process(hit.data)); } catch { /* ignore */ } }
+  if (hit && !force && Date.now() - hit.t < FRESH_MS) return Promise.resolve(process(hit.data));
+  if (!inflight.has(key)) {
+    inflight.set(key, rawGet(params).then((d) => { writeCache(key, d); return d; }).finally(() => inflight.delete(key)));
+  }
+  return inflight.get(key).then(process);
 }
 
 // ── Demo storage (browser only) ────────────────────────────────
@@ -130,10 +191,16 @@ const inRange = (r, from, to, employeeId) =>
   (!from || r.date >= from) && (!to || r.date <= to) && (!employeeId || r.employeeId === employeeId);
 
 // ── Public API ─────────────────────────────────────────────────
-export async function fetchEmployees() {
+/** Team list from the last visit, so the sign-in screen appears instantly. */
+export function peekEmployees() {
+  if (IS_DEMO) return [];
+  const hit = readCache('action=employees');
+  return hit ? hit.data.map(normaliseEmployee) : [];
+}
+
+export async function fetchEmployees({ onCache } = {}) {
   if (IS_DEMO) return DEFAULT_EMPLOYEES.map(({ pin, ...e }) => e);
-  const list = await get({ action: 'employees' });
-  return list.map(normaliseEmployee);
+  return cachedRead({ action: 'employees' }, (list) => list.map(normaliseEmployee), { onCache });
 }
 
 export async function login(employeeId, pin) {
@@ -146,17 +213,15 @@ export async function login(employeeId, pin) {
   return normaliseEmployee(await post({ action: 'login', employeeId, pin }));
 }
 
-export async function fetchReports({ from, to, employeeId } = {}) {
-  let list;
-  if (IS_DEMO) list = demoData().reports.filter((r) => inRange(r, from, to, employeeId));
-  else {
-    const params = { action: 'reports' };
-    if (from) params.from = from;
-    if (to) params.to = to;
-    if (employeeId) params.employeeId = employeeId;
-    list = await get(params);
-  }
-  return list.sort((a, b) => (a.date < b.date ? 1 : -1));
+const newestFirst = (list) => [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+export async function fetchReports({ from, to, employeeId, onCache, force } = {}) {
+  if (IS_DEMO) return newestFirst(demoData().reports.filter((r) => inRange(r, from, to, employeeId)));
+  const params = { action: 'reports' };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  if (employeeId) params.employeeId = employeeId;
+  return cachedRead(params, newestFirst, { onCache, force });
 }
 
 export async function saveReport(report) {
@@ -173,30 +238,34 @@ export async function saveReport(report) {
  * Returns { calls: [], orders: [], customers: [], cancellations: [], hiring: [] }.
  * Customers are always returned in full (not limited by date) so totals are all-time.
  */
-export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId } = {}) {
-  const out = {};
-  types.forEach((t) => { out[t] = []; });
+export async function fetchRecords({ types = TYPE_KEYS, from, to, employeeId, onCache, force } = {}) {
+  const shape = (raw) => {
+    const out = {};
+    types.forEach((t) => { out[t] = [...(raw[t] || [])]; });
+    Object.keys(out).forEach((t) => {
+      if (isFollowup(t)) out[t] = out[t].map(withHistory);
+      out[t].sort((a, b) => ((a.lastAt || a.createdAt) < (b.lastAt || b.createdAt) ? 1 : -1));
+    });
+    return out;
+  };
   if (IS_DEMO) {
+    const raw = {};
+    types.forEach((t) => { raw[t] = []; });
     demoData().records.forEach((r) => {
-      if (!out[r.type_]) return;
+      if (!raw[r.type_]) return;
       let ok;
       if (r.type_ === 'customers') ok = !employeeId || r.employeeId === employeeId;
       else if (isFollowup(r.type_)) ok = activeInRange(r, from, to, employeeId);
       else ok = inRange(r, from, to, employeeId);
-      if (ok) out[r.type_].push(r);
+      if (ok) raw[r.type_].push(r);
     });
-  } else {
-    const params = { action: 'records', types: types.join(',') };
-    if (from) params.from = from;
-    if (to) params.to = to;
-    if (employeeId) params.employeeId = employeeId;
-    Object.assign(out, await get(params));
+    return shape(raw);
   }
-  Object.keys(out).forEach((t) => {
-    if (isFollowup(t)) out[t] = out[t].map(withHistory);
-    out[t].sort((a, b) => ((a.lastAt || a.createdAt) < (b.lastAt || b.createdAt) ? 1 : -1));
-  });
-  return out;
+  const params = { action: 'records', types: types.join(',') };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  if (employeeId) params.employeeId = employeeId;
+  return cachedRead(params, shape, { onCache, force });
 }
 
 // A call belongs to a period if it was added before the period ended and touched during/after its start

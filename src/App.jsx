@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings } from 'lucide-react';
+import { CalendarCheck2, History, LayoutDashboard, FileDown, LogOut, Contact, Settings, BellRing } from 'lucide-react';
 import Login from './pages/Login';
 import DailyEntry from './pages/DailyEntry';
 import MyReports from './pages/MyReports';
@@ -8,7 +8,9 @@ import ReportsCenter from './pages/ReportsCenter';
 import RecordsPage from './pages/RecordsPage';
 import SettingsPage from './pages/SettingsPage';
 import { Avatar, Toast } from './components/ui';
-import { fetchEmployees, IS_DEMO } from './lib/api';
+import { fetchEmployees, fetchReports, peekEmployees, clearCache, IS_DEMO } from './lib/api';
+import { REMINDER_HOUR } from './config/team';
+import { todayISO } from './lib/date';
 
 const SESSION_KEY = 'pulse_user_v1';
 
@@ -26,7 +28,7 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
   });
-  const [employees, setEmployees] = useState([]);
+  const [employees, setEmployees] = useState(() => peekEmployees()); // last known team list, so sign-in shows instantly
   const [page, setPageRaw] = useState(null);
   const [pageParams, setPageParams] = useState(null);
   const setPage = useCallback((p, params = null) => { setPageParams(params); setPageRaw(p); window.scrollTo(0, 0); }, []);
@@ -36,11 +38,22 @@ export default function App() {
   const clearToast = useCallback(() => setToast(null), []);
 
   useEffect(() => {
-    fetchEmployees().then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
+    fetchEmployees({ onCache: setEmployees }).then(setEmployees).catch((e) => notify(`Couldn’t load the team list: ${e.message}`, 'error'));
   }, [notify]);
 
   useEffect(() => {
     if (user && !page) setPage(user.viewOnly ? 'team' : 'today');
+  }, [user, page]);
+
+  // In-app reminder: after the reminder hour, staff who haven't submitted see a banner on every page
+  const [submittedToday, setSubmittedToday] = useState(true);
+  useEffect(() => {
+    if (!user || user.viewOnly) return undefined;
+    const check = () => fetchReports({ employeeId: user.id, from: todayISO(), to: todayISO() })
+      .then((list) => setSubmittedToday(list.length > 0)).catch(() => {});
+    check();
+    const id = setInterval(check, 300000);
+    return () => clearInterval(id);
   }, [user, page]);
 
   const handleLogin = (u) => {
@@ -50,6 +63,7 @@ export default function App() {
   };
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
+    clearCache(true); // nothing from this person's session stays on the device
     setUser(null);
     setPage(null);
   };
@@ -102,6 +116,12 @@ export default function App() {
             <button className="logout" onClick={logout} aria-label="Sign out"><Avatar person={user} size={30} /><LogOut size={16} /></button>
           </span>
         </header>
+        {!user.viewOnly && !submittedToday && page !== 'today' && new Date().getHours() >= REMINDER_HOUR && new Date().getDay() !== 0 && (
+          <div className="due-banner">
+            <span><BellRing size={17} style={{ verticalAlign: -3, marginRight: 6 }} /><b>Today’s report isn’t submitted yet.</b> Please finish it before you leave.</span>
+            <button className="btn btn-primary btn-sm" onClick={() => setPage('today')}>Submit now</button>
+          </div>
+        )}
         {IS_DEMO && <div className="demo-banner">Demo mode — reports are saved in this browser only. Add your Google Sheet link to go live.</div>}
 
         {page === 'today' && <DailyEntry {...props} />}

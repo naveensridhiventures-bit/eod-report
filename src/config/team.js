@@ -66,11 +66,23 @@ export const RECORD_TYPES = {
     label: 'Hiring calls', short: 'HR calls', noun: 'HR calls', verb: 'Import HR calls',
     cols: ['title', 'name', 'phone', 'remarks', 'status'],
     statuses: HIRING_STATUSES,
-    titleHint: 'Which position are you hiring for?',
-    titles: ['Driver', 'Call driver', 'Telecaller', 'Delivery boy', 'Distributor'],
+    titleHint: 'Which role are you hiring for?',
+    titles: ['Driver', 'Telecaller', 'Accountant', 'Security'],
     example: 'Suresh\t9876501234\tInterview scheduled Monday 11am\nPriya, 9988776655, joined today\nArun 9090909090 relieved'
   }
 };
+
+// Roles offered in the HR import (plus "Other", which the person types)
+export const HIRING_ROLES = ['Driver', 'Telecaller', 'Accountant', 'Security'];
+
+// Every employee gets this box on their daily report
+export const EXTRA_FIELD = {
+  key: 'extra_work', short: 'Additional work', label: 'Additional work',
+  placeholder: 'Anything else you did today that is not in your lists: errands, meetings, deliveries, follow-ups, training…', rows: 3
+};
+
+// After this hour (24h) the app starts nudging people who have not submitted
+export const REMINDER_HOUR = 18;
 
 export const COL_LABELS = {
   title: 'Title', name: 'Name', phone: 'Number', remarks: 'Remarks', status: 'Status', product: 'Product',
